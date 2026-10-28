@@ -49,11 +49,11 @@ describe("redirects are never followed with credentials", () => {
 });
 
 describe("approval link policy", () => {
-  const issuer = "https://internal-yak-70.clerk.accounts.dev";
+  const issuer = "https://example-app-00.clerk.accounts.dev"; // public-check: allow
   it("accepts https links on the issuer's domain and rejects everything else", () => {
     expect(
       approvalUrl(
-        "https://internal-yak-70.accounts.dev/device?user_code=AB",
+        "https://example-app-00.accounts.dev/device?user_code=AB",
         issuer,
       ),
     ).toContain("accounts.dev/device");
@@ -65,12 +65,12 @@ describe("approval link policy", () => {
     ).toBeTruthy();
     expect(approvalUrl("C:\\Windows\\System32\\calc.exe", issuer)).toBeNull();
     expect(
-      approvalUrl("http://internal-yak-70.accounts.dev/device", issuer),
+      approvalUrl("http://example-app-00.accounts.dev/device", issuer),
     ).toBeNull();
     expect(approvalUrl("https://evil.example/device", issuer)).toBeNull();
     expect(
       approvalUrl(
-        "https://user:pw@internal-yak-70.accounts.dev/device",
+        "https://user:pw@example-app-00.accounts.dev/device", // public-check: allow
         issuer,
       ),
     ).toBeNull();

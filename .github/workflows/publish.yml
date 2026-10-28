@@ -1,5 +1,7 @@
 # Publishes crisperio to npm through trusted publishing (no npm token).
-# Runs only when a GitHub release is published or on a manual run.
+# Runs only when a GitHub release is published or on a manual run from main.
+# Publishes only after check.yml passes, including that the release tag
+# matches the package.json version.
 name: Publish to npm
 
 on:
@@ -9,23 +11,36 @@ on:
 
 permissions:
   contents: read
-  id-token: write
 
 jobs:
+  check:
+    uses: ./.github/workflows/check.yml
+    with:
+      tag: ${{ github.event.release.tag_name }}
+
   publish:
+    needs: check
+    if: github.event_name == 'release' || github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
         with:
           version: 10
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 22
+          node-version: 24
           registry-url: https://registry.npmjs.org
           cache: pnpm
-      - run: npm install -g npm@latest
+      # Trusted publishing needs npm 11.5.1 or newer.
+      - run: npm install -g npm@11
       - run: pnpm install --frozen-lockfile
       - run: pnpm test
       - run: pnpm run build
+      # prepublishOnly runs scripts/check-public.mjs again on this exact build.
       - run: npm publish --provenance --access public

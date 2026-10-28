@@ -23,7 +23,9 @@
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run",
-    "prepack": "tsc -p tsconfig.build.json"
+    "check:public": "node scripts/check-public.mjs",
+    "prepack": "tsc -p tsconfig.build.json",
+    "prepublishOnly": "node scripts/check-public.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.32.2",
