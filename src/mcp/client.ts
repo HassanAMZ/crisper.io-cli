@@ -6,7 +6,7 @@ import {
 
 import { type Session } from "../auth/session.js";
 import { CliError, EXIT } from "../errors.js";
-import { type Progress, quiet } from "../net.js";
+import { waiting } from "../net.js";
 import { safeText } from "../output.js";
 import { VERSION } from "../version.js";
 
@@ -109,7 +109,7 @@ export function toolError(
     case "org_required":
       return new CliError("INVALID_ARGUMENT", "Choose an organization first.", {
         exit: EXIT.usage,
-        next: "Run `crisper orgs use <orgId>` or pass --org.",
+        next: "Run `crisper orgs use` to choose one, or pass --org.",
       });
     case "in_progress":
       return new CliError("SERVER_ERROR", message, {
@@ -263,13 +263,6 @@ function isUnauthorized(error: unknown) {
   return error instanceof StreamableHTTPError && error.code === 401;
 }
 
-let progress: Progress = quiet;
-
-/** How a tool call shows that it's waiting: a spinner for a person, nothing otherwise. */
-export function setCallProgress(p: Progress) {
-  progress = p;
-}
-
 /**
  * Call one MCP tool. `write` marks tools that change something, so a failure
  * whose outcome is unknown exits 8 (check before retrying) instead of 1.
@@ -277,7 +270,7 @@ export function setCallProgress(p: Progress) {
 export function callTool(
   ...args: Parameters<typeof callToolNow>
 ): ReturnType<typeof callToolNow> {
-  return progress(() => callToolNow(...args));
+  return waiting(() => callToolNow(...args));
 }
 
 async function callToolNow(

@@ -98,6 +98,7 @@ function harness() {
       return secret;
     },
     stdin: async () => stdin,
+    choose: async () => null,
   };
   const context = (mode: OutputMode, signal: AbortSignal): CommandContext => ({
     config: { origin: ORIGIN, clientId: "cid", scope: "profile" },

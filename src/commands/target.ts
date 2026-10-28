@@ -38,7 +38,7 @@ export async function resolveOrg(
     );
   throw new CliError("INVALID_ARGUMENT", "Choose an organization first.", {
     exit: EXIT.usage,
-    next: "Run `crisper orgs use <orgId>` or pass --org.",
+    next: "Run `crisper orgs use` to choose one, or pass --org.",
   });
 }
 

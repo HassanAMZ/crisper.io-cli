@@ -3,8 +3,7 @@ import { type Session, loadSession } from "../auth/session.js";
 import { ConfigStore, KeyringStore, type SecretStore } from "../auth/store.js";
 import { type CliConfig, resolveConfig } from "../config.js";
 import { runnerAware } from "../invocation.js";
-import { setCallProgress } from "../mcp/client.js";
-import { quiet, retryingFetch, spinner } from "../net.js";
+import { quiet, retryingFetch, setProgress, spinner } from "../net.js";
 import { type OutputMode, type Writer, stdio } from "../output.js";
 import { type Prompter, terminal } from "../prompt.js";
 
@@ -31,7 +30,7 @@ export function defaultContext(
   mode: OutputMode,
   signal: AbortSignal,
 ): CommandContext {
-  setCallProgress(!mode.json && process.stderr.isTTY ? spinner() : quiet);
+  setProgress(!mode.json && process.stderr.isTTY ? spinner() : quiet);
   return {
     config: resolveConfig(),
     mode,

@@ -6,7 +6,11 @@ import {
   defaultContext,
   sessionOf,
 } from "./commands/context.js";
-import { orgsList, orgsUse } from "./commands/orgs.js";
+import {
+  orgsList,
+  orgsUse,
+  requireOrgIdUnlessChoosing,
+} from "./commands/orgs.js";
 import {
   billingCancel,
   billingLink,
@@ -179,12 +183,15 @@ export function createProgram(deps: ProgramDeps = {}): {
       ),
     );
   orgs
-    .command("use <orgId>")
-    .description("choose the organization later commands use")
-    .action((orgId: string) =>
-      run("orgs use", argvForRun, async (ctx) =>
-        orgsUse(ctx, await sessionOf(ctx), orgId),
-      ),
+    .command("use [orgId]")
+    .description(
+      "choose the organization later commands use (no ID: pick from a list)",
+    )
+    .action((orgId: string | undefined) =>
+      run("orgs use", argvForRun, async (ctx) => {
+        requireOrgIdUnlessChoosing(ctx, orgId);
+        return orgsUse(ctx, await sessionOf(ctx), orgId);
+      }),
     );
 
   // Every site command takes the same two selectors.

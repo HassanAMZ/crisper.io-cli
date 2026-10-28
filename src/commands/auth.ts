@@ -11,9 +11,16 @@ import { secretName } from "../auth/store.js";
 import { revokeToken } from "../auth/tokens.js";
 import { requireClientId } from "../config.js";
 import { CliError, EXIT } from "../errors.js";
+import { waiting } from "../net.js";
 import { type Envelope, safeText } from "../output.js";
 import { type CommandContext, sessionOf } from "./context.js";
-import { type Organization, fetchOrganizations, orgsTable } from "./orgs.js";
+import {
+  type Organization,
+  canChoose,
+  chooseOrganization,
+  fetchOrganizations,
+  orgsTable,
+} from "./orgs.js";
 
 const depsOf = (ctx: CommandContext): SessionDeps => ({
   config: ctx.config,
@@ -45,8 +52,9 @@ export function approvalUrl(url: string, issuer: string): string | null {
  * `crisper login`: device sign-in. The verification URL and code go to stderr
  * so `--json` stdout stays a single envelope. The browser opens only when the
  * terminal is interactive and `--no-browser` was not given. A previous
- * sign-in for this origin is revoked first so no token is left behind, and a
- * sign-in that the MCP gate then refuses is revoked again rather than kept.
+ * sign-in for this origin is revoked once the new one is approved, so no
+ * token is left behind, and a sign-in that the MCP gate then refuses is
+ * revoked again rather than kept.
  */
 export async function login(
   ctx: CommandContext,
@@ -56,24 +64,20 @@ export async function login(
   const deps = depsOf(ctx);
   // The previous sign-in's choices, kept only if the same person signs in again.
   const previous = (await ctx.configs.read()).profiles[ctx.config.origin];
-  if (await hasSession(deps)) {
-    try {
-      await (await loadSession(deps)).signOut();
-    } catch {
-      await clearSession(deps).catch(() => {});
-    }
-  }
 
-  const meta = await discoverAuth(ctx.config.origin, ctx.fetcher);
-  const start = await requestDeviceCode(
-    {
-      endpoint: meta.deviceAuthorizationEndpoint,
-      clientId,
-      scope: ctx.config.scope,
-      resource: meta.resource,
-    },
-    { fetcher: ctx.fetcher },
-  );
+  const { meta, start } = await waiting(async () => {
+    const meta = await discoverAuth(ctx.config.origin, ctx.fetcher);
+    const start = await requestDeviceCode(
+      {
+        endpoint: meta.deviceAuthorizationEndpoint,
+        clientId,
+        scope: ctx.config.scope,
+        resource: meta.resource,
+      },
+      { fetcher: ctx.fetcher },
+    );
+    return { meta, start };
+  }, "Contacting Crisper…");
   const verificationUri = approvalUrl(start.verificationUri, meta.issuer);
   const url =
     (start.verificationUriComplete &&
@@ -98,16 +102,29 @@ export async function login(
   if (options.browser && ctx.interactive)
     await ctx.openBrowser(url).catch(() => {});
 
-  const tokens = await pollForToken(
-    {
-      tokenEndpoint: meta.tokenEndpoint,
-      clientId,
-      resource: meta.resource,
-      start,
-      signal: ctx.signal,
-    },
-    { fetcher: ctx.fetcher, now: ctx.now, signal: ctx.signal },
+  const tokens = await waiting(
+    () =>
+      pollForToken(
+        {
+          tokenEndpoint: meta.tokenEndpoint,
+          clientId,
+          resource: meta.resource,
+          start,
+          signal: ctx.signal,
+        },
+        { fetcher: ctx.fetcher, now: ctx.now, signal: ctx.signal },
+      ),
+    "Waiting for you to approve in the browser…",
   );
+  // Only now is the previous sign-in replaced, so a cancelled or failed
+  // login leaves it working.
+  if (await hasSession(deps)) {
+    try {
+      await (await loadSession(deps)).signOut();
+    } catch {
+      await clearSession(deps).catch(() => {});
+    }
+  }
   try {
     await saveSession(deps, {
       issuer: meta.issuer,
@@ -153,9 +170,11 @@ export async function login(
     samePerson && organizations.some((o) => o.orgId === previous?.defaultOrgId)
       ? (previous?.defaultOrgId ?? null)
       : null;
-  // Only an unambiguous choice is made for the customer.
-  const keep =
-    organizations.length === 1 ? organizations[0]!.orgId : previousOrg;
+  // Only an unambiguous choice is made for the customer; otherwise a person
+  // at the terminal is asked.
+  let keep = organizations.length === 1 ? organizations[0]!.orgId : previousOrg;
+  if (!keep && organizations.length > 1 && canChoose(ctx))
+    keep = await chooseOrganization(ctx, organizations);
   await session.updateProfile({
     subject: userId,
     defaultOrgId: keep,
@@ -177,13 +196,17 @@ export async function login(
         organizations: Organization[];
         defaultOrgId: string | null;
       };
-      const lines = [
-        `Signed in to Crisper (${new URL(ctx.config.origin).host}).`,
-        "",
-        orgsTable(d.organizations, d.defaultOrgId),
-      ];
+      const signedIn = `Signed in to Crisper (${new URL(ctx.config.origin).host}).`;
+      const using = d.organizations.find((o) => o.orgId === d.defaultOrgId);
+      if (using && d.organizations.length > 1)
+        return [
+          signedIn,
+          `Using ${safeText(using.name)} (${safeText(using.orgId)}) for later commands.`,
+          "Switch any time: crisper orgs use",
+        ].join("\n");
+      const lines = [signedIn, "", orgsTable(d.organizations, d.defaultOrgId)];
       if (d.organizations.length > 1 && !d.defaultOrgId)
-        lines.push("", "Pick one for later commands: crisper orgs use <orgId>");
+        lines.push("", "Pick one for later commands: crisper orgs use");
       return lines.join("\n");
     },
   };
@@ -210,7 +233,7 @@ export async function status(ctx: CommandContext) {
         `Signed in to Crisper (${new URL(p.origin).host}) since ${p.signedInAt}.`,
         data.defaultOrgId
           ? `Default organization: ${safeText(data.defaultOrgId)}`
-          : "No default organization. Run `crisper orgs use <orgId>`.",
+          : "No default organization. Run `crisper orgs use` to choose one.",
         ...(data.defaultSiteId
           ? [`Default website: ${safeText(data.defaultSiteId)}`]
           : []),

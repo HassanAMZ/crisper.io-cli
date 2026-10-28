@@ -57,10 +57,23 @@ const FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "
 export const SPINNER_DELAY_MS = 300;
 
 type Stream = { write(text: string): unknown };
-export type Progress = <T>(work: () => Promise<T>) => Promise<T>;
+export type Progress = <T>(
+  work: () => Promise<T>,
+  label?: string,
+) => Promise<T>;
 
 /** No indicator: --json, scripts, tests. */
 export const quiet: Progress = (work) => work();
+
+let current: Progress = quiet;
+
+/** How this run shows that it's waiting: a spinner for a person, nothing otherwise. */
+export function setProgress(p: Progress) {
+  current = p;
+}
+
+/** Run `work` behind this run's indicator. */
+export const waiting: Progress = (work, label) => current(work, label);
 
 /**
  * Shows "Waiting for Crisper…" on stderr while `work` runs, so a slow network
@@ -69,9 +82,9 @@ export const quiet: Progress = (work) => work();
  */
 export function spinner(
   stream: Stream = process.stderr,
-  label = "Waiting for Crisper…",
+  defaultLabel = "Waiting for Crisper…",
 ): Progress {
-  return async (work) => {
+  return async (work, label = defaultLabel) => {
     let frame = 0;
     let ticker: NodeJS.Timeout | undefined;
     const draw = () =>
