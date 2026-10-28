@@ -336,10 +336,20 @@ export async function sitesAdd(
     currency: (flags.currency ?? "USD").toUpperCase(),
     restricted: flags.restricted,
   };
-  ctx.writer.err(
+  const changes = [
     `Add ${safeText(domain)} to organization ${safeText(orgId)}: ${safeText(settings.siteType)}, ${safeText(settings.currency)}, ${safeText(settings.timezone)}, ${settings.restricted ? "restricted category on" : "restricted category off"}. No charge is made.`,
+  ];
+  ctx.writer.err(changes.join("\n"));
+  await confirm(
+    ctx.prompter,
+    ctx.interactive && !ctx.mode.json,
+    flags.yes,
+    "Add this website?",
+    {
+      changes,
+      argv: ctx.argv ?? [],
+    },
   );
-  await confirm(ctx.prompter, ctx.interactive, flags.yes, "Add this website?");
   const { data } = await callTool(
     session,
     ctx.config.origin,

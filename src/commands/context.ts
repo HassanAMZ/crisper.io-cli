@@ -15,6 +15,8 @@ import { type Prompter, terminal } from "../prompt.js";
 
 /** Everything a command needs, built once per invocation and replaceable in tests. */
 export type CommandContext = {
+  /** Original user arguments, retained for an approval replay. */
+  argv?: string[];
   config: CliConfig;
   mode: OutputMode;
   writer: Writer;

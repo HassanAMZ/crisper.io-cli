@@ -1,10 +1,11 @@
 import { type Command } from "commander";
 
 import { ConfigStore } from "./auth/store.js";
+import { leafCommands, subcommands } from "./command-tree.js";
 import { createProgram } from "./cli.js";
 import { resolveConfig } from "./config.js";
 import { safeText } from "./output.js";
-import { type Suggestion, readLine } from "./lineEditor.js";
+import { type Suggestion, readLine } from "./line-editor.js";
 import { type Choice, pick } from "./picker.js";
 import { VERSION } from "./version.js";
 
@@ -63,9 +64,6 @@ export type Plan =
   | { kind: "menu"; path: string[]; question: string; choices: Choice[] }
   | { kind: "needs"; prefill: string; usage: string }
   | { kind: "unknown"; word: string };
-
-const subcommands = (cmd: Command) =>
-  cmd.commands.filter((c) => c.name() !== "help");
 
 /**
  * Nothing typed: the list of commands. A group (`dns`): its commands. A
@@ -129,25 +127,16 @@ const dim = (text: string) =>
 
 /** Every command a person can run, for the suggestions under the prompt. */
 export function suggestionsFor(program: Command): Suggestion[] {
-  const out: Suggestion[] = [];
-  const walk = (cmd: Command, path: string[]) => {
-    for (const c of subcommands(cmd)) {
-      const here = [...path, c.name()];
-      if (subcommands(c).length > 0) walk(c, here);
-      else
-        out.push({
-          command: here.join(" "),
-          usage: [
-            ...c.registeredArguments.map((a) =>
-              a.required ? `<${a.name()}>` : `[${a.name()}]`,
-            ),
-            ...c.options.filter((o) => o.mandatory).map((o) => o.flags),
-          ].join(" "),
-          description: c.description(),
-        });
-    }
-  };
-  walk(program, []);
+  const out: Suggestion[] = leafCommands(program).map(({ command, node }) => ({
+    command,
+    usage: [
+      ...node.registeredArguments.map((a) =>
+        a.required ? `<${a.name()}>` : `[${a.name()}]`,
+      ),
+      ...node.options.filter((o) => o.mandatory).map((o) => o.flags),
+    ].join(" "),
+    description: node.description(),
+  }));
   out.push(
     { command: "help", usage: "", description: "every command and option" },
     { command: "exit", usage: "", description: "leave Crisper" },

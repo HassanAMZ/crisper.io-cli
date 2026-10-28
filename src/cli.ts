@@ -1,5 +1,13 @@
 import { Command, CommanderError } from "commander";
 
+import {
+  commandCatalog,
+  commandTree,
+  EXAMPLES,
+  EXIT_CODES,
+} from "./command-tree.js";
+import { normalizeDomain } from "./commands/target.js";
+import { validateDomain, validateOrg, validateSite } from "./validation.js";
 import { login, logout, status } from "./commands/auth.js";
 import {
   type CommandContext,
@@ -42,6 +50,8 @@ import {
   emit,
   envelope,
   stdio,
+  safeJson,
+  table,
 } from "./output.js";
 import { VERSION } from "./version.js";
 
@@ -99,6 +109,11 @@ export function createProgram(deps: ProgramDeps = {}): {
     });
 
   let exitCode: number = EXIT.ok;
+  let activeCommand = program;
+  let usageCommand = "crisper";
+  program.hook("preAction", (_root, command) => {
+    activeCommand = command;
+  });
 
   const modeOf = (argv: string[]): OutputMode => {
     const opts = program.opts<{
@@ -134,7 +149,15 @@ export function createProgram(deps: ProgramDeps = {}): {
       ...(ctx?.resolved.siteId ? { siteId: ctx.resolved.siteId } : {}),
     });
     try {
+      const flags = activeCommand.opts<{ org?: string; site?: string }>();
+      validateOrg(flags.org);
+      validateSite(flags.site);
+      if (name === "orgs use") validateOrg(activeCommand.args[0]);
+      if (name === "sites use") validateSite(activeCommand.args[0]);
+      if (name === "sites add")
+        validateDomain(normalizeDomain(activeCommand.args[0]!));
       ctx = makeContext(mode, signal);
+      ctx.argv = [...argv];
       out = ctx.writer;
       const outcome = await work(ctx);
       emit(
@@ -421,9 +444,51 @@ export function createProgram(deps: ProgramDeps = {}): {
       ),
   );
 
+  program
+    .command("commands")
+    .description("list every command, option, example, and error code")
+    .action(() =>
+      run("commands", argvForRun, async () => {
+        const data = commandCatalog(program);
+        return {
+          data,
+          human: () =>
+            table(data.commands.map((c) => [c.command, c.description])),
+        };
+      }),
+    );
+
+  for (const { command, node } of [
+    { command: "", node: program },
+    ...commandTree(program),
+  ]) {
+    node.exitOverride((error) => {
+      usageCommand = ["crisper", command].filter(Boolean).join(" ");
+      throw error;
+    });
+    for (const option of node.options)
+      if (option.mandatory) option.description += " (required)";
+    if (EXAMPLES[command])
+      node.addHelpText(
+        "after",
+        `\nExamples:\n${EXAMPLES[command]!.map((e) => `  ${e}`).join("\n")}`,
+      );
+  }
+  program.addHelpText(
+    "after",
+    [
+      "\nAgents: add --json for a single structured envelope.",
+      `Exit codes: ${Object.entries(EXIT_CODES)
+        .map(([code, label]) => `${code} ${label}`)
+        .join(", ")}.`,
+      "Run crisper commands --json to list every command and option.",
+    ].join("\n"),
+  );
+
   const runArgv = async (argv: string[]): Promise<number> => {
     argvForRun = argv;
     exitCode = EXIT.ok;
+    usageCommand = "crisper";
     try {
       await program.parseAsync(argv, { from: "user" });
       return exitCode;
@@ -432,14 +497,21 @@ export function createProgram(deps: ProgramDeps = {}): {
         // `--help` and `--version` exit 0; help shown because a subcommand
         // is missing (`crisper orgs`) carries a nonzero code and is a usage error.
         if (error.exitCode === 0) return EXIT.ok;
-        const usage = new CliError("INVALID_ARGUMENT", "Invalid arguments.", {
-          exit: EXIT.usage,
-          next: "Run `crisper --help`.",
-        });
+        const usage = new CliError(
+          "INVALID_ARGUMENT",
+          error.message
+            .replace(/^error:\s*/i, "")
+            .replace(/\s+/g, " ")
+            .trim(),
+          {
+            exit: EXIT.usage,
+            next: `Run \`${usageCommand} --help\`.`,
+          },
+        );
         const mode = modeOf(argv);
         if (mode.json)
           writer.out(
-            JSON.stringify(
+            safeJson(
               envelope("crisper", { origin: "" }, { ok: false, error: usage }),
             ),
           );

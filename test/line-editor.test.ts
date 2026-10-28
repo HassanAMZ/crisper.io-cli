@@ -7,7 +7,7 @@ import {
   editorKeys,
   suggest,
   suggestionLines,
-} from "../src/lineEditor.js";
+} from "../src/line-editor.js";
 import { suggestionsFor } from "../src/shell.js";
 
 const all = suggestionsFor(createProgram().program);

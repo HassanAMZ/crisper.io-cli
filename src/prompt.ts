@@ -1,6 +1,7 @@
 import { createInterface } from "node:readline";
 
 import { CliError, EXIT } from "./errors.js";
+import { shellArg } from "./output.js";
 import { type Choice, pick } from "./picker.js";
 
 /**
@@ -114,14 +115,28 @@ export async function confirm(
   interactive: boolean,
   yes: boolean,
   question: string,
+  protocol: { changes: string[]; argv: string[] },
 ): Promise<void> {
   if (yes) return;
-  if (!interactive)
-    throw new CliError(
-      "INVALID_ARGUMENT",
-      "This changes your account and needs a yes.",
-      { exit: EXIT.usage, next: "Run it in a terminal, or add --yes." },
+  if (!interactive) {
+    // Insert before `--`, if present, so --yes remains an option on replay.
+    const argv = [...protocol.argv];
+    const end = argv.indexOf("--");
+    argv.splice(end === -1 ? argv.length : end, 0, "--yes");
+    const error = new CliError(
+      "CONFIRMATION_REQUIRED",
+      "This change needs approval. Nothing was changed.",
+      {
+        exit: EXIT.usage,
+        next: "Show the changes to the person, then run the confirmCommand.",
+      },
     );
+    error.data = {
+      changes: protocol.changes,
+      confirmCommand: `crisper ${argv.map(shellArg).join(" ")}`,
+    };
+    throw error;
+  }
   const answer = await prompter.ask(`${question} Type yes to continue: `);
   if (answer.toLowerCase() !== "yes")
     throw new CliError("INVALID_ARGUMENT", "Nothing was changed.", {

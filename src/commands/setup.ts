@@ -506,13 +506,18 @@ export async function integrationsConnect(
     );
   const pixelId = flags.pixel.trim();
   const { site } = await resolveSite(ctx, session, flags);
-  // Refuse before asking for the token if the change could never be confirmed.
-  if (!flags.yes && (!ctx.interactive || flags.tokenStdin))
-    throw new CliError(
-      "INVALID_ARGUMENT",
-      "This changes your account and needs a yes.",
-      { exit: EXIT.usage, next: "Run it in a terminal, or add --yes." },
-    );
+  const changes = [
+    `Connect ${platform === "meta" ? "Meta" : "TikTok"} pixel ${safeText(pixelId)} to ${safeText(site.domain)}${flags.label ? ` with label ${safeText(flags.label)}` : ""}. If your organization already saved this pixel, the new token replaces the old one for every site using it.`,
+  ];
+  ctx.writer.err(changes.join("\n"));
+  // Approval precedes secret input, including piped stdin.
+  await confirm(
+    ctx.prompter,
+    ctx.interactive && !ctx.mode.json && !flags.tokenStdin,
+    flags.yes,
+    "Connect it?",
+    { changes, argv: ctx.argv ?? [] },
+  );
   const tokenName =
     platform === "meta"
       ? "Conversions API access token"
@@ -526,15 +531,6 @@ export async function integrationsConnect(
       `That doesn't look like a ${tokenName}.`,
       { exit: EXIT.usage },
     );
-  ctx.writer.err(
-    `Connect ${platform === "meta" ? "Meta" : "TikTok"} pixel ${safeText(pixelId)} to ${safeText(site.domain)}. If your organization already saved this pixel, the new token replaces the old one for every site using it.`,
-  );
-  await confirm(
-    ctx.prompter,
-    ctx.interactive && !flags.tokenStdin,
-    flags.yes,
-    "Connect it?",
-  );
   const { data } = await callTool(
     session,
     ctx.config.origin,
@@ -665,10 +661,20 @@ export async function billingCancel(
       ),
       first.data,
     );
-  ctx.writer.err(
+  const changes = [
     `Cancel billing for ${safeText(first.site.domain)}${first.d.plan ? ` (${safeText(first.d.plan)})` : ""}. Tracking continues until ${safeText(first.d.currentPeriodEnd ?? "the end of the period")}, then stops.`,
+  ];
+  ctx.writer.err(changes.join("\n"));
+  await confirm(
+    ctx.prompter,
+    ctx.interactive && !ctx.mode.json,
+    flags.yes,
+    "Cancel billing?",
+    {
+      changes,
+      argv: ctx.argv ?? [],
+    },
   );
-  await confirm(ctx.prompter, ctx.interactive, flags.yes, "Cancel billing?");
   const { data } = await callTool(
     session,
     ctx.config.origin,

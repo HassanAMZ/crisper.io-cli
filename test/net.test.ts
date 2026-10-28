@@ -117,6 +117,17 @@ describe("suggested commands", () => {
     expect(viaRunner("/x.js", { npm_command: "exec" })).toBe(true);
   });
 
+  it("preserves exact approval replay arguments under npx", () => {
+    const envelope = JSON.stringify({
+      data: {
+        changes: ["Connect a pixel with label crisper shop"],
+        confirmCommand:
+          "crisper integrations connect --label 'crisper shop' --platform meta --pixel 1234567890 --json --yes",
+      },
+    });
+    expect(commandsFor(true)(envelope)).toBe(envelope);
+  });
+
   it("rewrites commands, not the product name or the domain", () => {
     const rewrite = commandsFor(true);
     expect(rewrite("Pick one: crisper orgs use <orgId>")).toBe(

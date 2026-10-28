@@ -155,7 +155,7 @@ function harness() {
     calls: [],
     orgs: [
       {
-        orgId: "org_1",
+        orgId: "org_0000000001",
         name: "W70 Test Clinic",
         role: "org:admin",
         siteCount: 1,
@@ -279,7 +279,7 @@ describe("crisper (command contract)", () => {
     const env = JSON.parse(h.out[0]!);
     expect(env.command).toBe("login");
     expect(env.ok).toBe(true);
-    expect(env.data.defaultOrgId).toBe("org_1");
+    expect(env.data.defaultOrgId).toBe("org_0000000001");
     expect(h.err.join("\n")).toContain("AAAA-BBBB");
     const everything = [...h.out, ...h.err].join("\n");
     expect(everything).not.toContain("device-secret");
@@ -383,8 +383,8 @@ describe("crisper (command contract)", () => {
 
   it("at a terminal, login and orgs use offer a list when there are several orgs", async () => {
     h.state.orgs = [
-      { orgId: "org_1", name: "A", role: "org:admin", siteCount: 1 },
-      { orgId: "org_2", name: "B", role: "org:admin", siteCount: 3 },
+      { orgId: "org_0000000001", name: "A", role: "org:admin", siteCount: 1 },
+      { orgId: "org_0000000002", name: "B", role: "org:admin", siteCount: 3 },
     ];
     h.state.sites = [
       { websiteId: "w_1", domain: "one.example", siteType: "shopify" },
@@ -392,24 +392,26 @@ describe("crisper (command contract)", () => {
     ];
     h.setInteractive(true);
     // The organization, then its website.
-    h.picks.push("org_2", "w_2");
+    h.picks.push("org_0000000002", "w_2");
     expect(await h.run("login", "--no-browser")).toBe(0);
     expect(h.asked).toEqual([
-      ["org_1", "org_2"],
+      ["org_0000000001", "org_0000000002"],
       ["w_1", "w_2"],
     ]);
     expect(h.out.join("\n")).toContain(
-      "Using B (org_2) and two.example for later commands.",
+      "Using B (org_0000000002) and two.example for later commands.",
     );
     expect(await h.run("--json", "auth", "status")).toBe(0);
-    expect(JSON.parse(h.out[0]!).data.defaultOrgId).toBe("org_2");
+    expect(JSON.parse(h.out[0]!).data.defaultOrgId).toBe("org_0000000002");
     expect(await h.defaultSite()).toBe("w_2");
     // orgs use with no ID asks; Esc changes nothing and exits 130.
     expect(await h.run("orgs", "use")).toBe(130);
     // Another org, website skipped: the old org's website is forgotten.
-    h.picks.push("org_1", null);
+    h.picks.push("org_0000000001", null);
     expect(await h.run("orgs", "use")).toBe(0);
-    expect(h.out.join("\n")).toContain("Using A (org_1) for later commands.");
+    expect(h.out.join("\n")).toContain(
+      "Using A (org_0000000001) for later commands.",
+    );
     expect(await h.defaultSite()).toBeNull();
     // sites use with no website asks too.
     h.picks.push("w_1");
@@ -424,16 +426,16 @@ describe("crisper (command contract)", () => {
 
   it("keeps the chosen org only when the same person signs in again", async () => {
     h.state.orgs = [
-      { orgId: "org_1", name: "A", role: "org:admin", siteCount: 1 },
-      { orgId: "org_2", name: "B", role: "org:admin", siteCount: 1 },
+      { orgId: "org_0000000001", name: "A", role: "org:admin", siteCount: 1 },
+      { orgId: "org_0000000002", name: "B", role: "org:admin", siteCount: 1 },
     ];
     h.state.userId = "user_1";
     await h.run("--json", "login", "--no-browser");
-    expect(await h.run("--json", "orgs", "use", "org_2")).toBe(0);
+    expect(await h.run("--json", "orgs", "use", "org_0000000002")).toBe(0);
     await h.setDefaultSite("w_2");
     h.state.pendingPolls = 0;
     await h.run("--json", "login", "--no-browser");
-    expect(JSON.parse(h.out[0]!).data.defaultOrgId).toBe("org_2");
+    expect(JSON.parse(h.out[0]!).data.defaultOrgId).toBe("org_0000000002");
     expect(await h.defaultSite()).toBe("w_2");
     h.state.userId = "user_2";
     await h.run("--json", "login", "--no-browser");
@@ -441,7 +443,7 @@ describe("crisper (command contract)", () => {
     expect(await h.defaultSite()).toBeNull();
     // A server without user IDs never carries a choice over.
     h.state.userId = undefined;
-    await h.run("--json", "orgs", "use", "org_2");
+    await h.run("--json", "orgs", "use", "org_0000000002");
     await h.run("--json", "login", "--no-browser");
     expect(JSON.parse(h.out[0]!).data.defaultOrgId).toBeNull();
   }, 30_000);
@@ -449,7 +451,7 @@ describe("crisper (command contract)", () => {
   it("human mode escapes server strings and keeps stdout clean on failure", async () => {
     h.state.orgs = [
       {
-        orgId: "org_1",
+        orgId: "org_0000000001",
         name: "Clinic\u001b[2J",
         role: "org:admin",
         siteCount: 2,

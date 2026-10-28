@@ -208,7 +208,15 @@ async function once(
   signal: AbortSignal | undefined,
 ): Promise<ToolResult> {
   const client = new Client({ name: "crisperio-cli", version: VERSION });
+  const endpoint = new URL(`${origin}/api/mcp`);
   const remembering: typeof fetch = async (input, init) => {
+    const method =
+      init?.method ?? (input instanceof Request ? input.method : "GET");
+    const url = input instanceof Request ? input.url : String(input);
+    // Crisper has no standalone SSE stream. Avoid the SDK's extra connection
+    // after initialization; the server would always answer this GET with 405.
+    if (method.toUpperCase() === "GET" && url === endpoint.href)
+      return new Response(null, { status: 405 });
     // The SDK sets its own signal on each request; add ours so Ctrl-C reaches
     // every request, including the initialize handshake.
     const signals = [init?.signal, signal].filter(
@@ -222,13 +230,10 @@ async function once(
     lastRetryAfter = Number.isFinite(retry) && retry > 0 ? retry : null;
     return response;
   };
-  const transport = new StreamableHTTPClientTransport(
-    new URL(`${origin}/api/mcp`),
-    {
-      requestInit: { headers: { authorization: `Bearer ${token}` } },
-      fetch: remembering,
-    },
-  );
+  const transport = new StreamableHTTPClientTransport(endpoint, {
+    requestInit: { headers: { authorization: `Bearer ${token}` } },
+    fetch: remembering,
+  });
   try {
     if (signal?.aborted) throw abortError();
     await client.connect(transport, signal ? { signal } : undefined);

@@ -143,4 +143,9 @@ export function emit(
   }
   const e = env.error!;
   writer.err(`${safeText(e.message)}${e.next ? `\n${safeText(e.next)}` : ""}`);
+  if (e.code === "CONFIRMATION_REQUIRED") {
+    const proposal = env.data as { confirmCommand?: unknown } | null;
+    if (typeof proposal?.confirmCommand === "string")
+      writer.err(`After approval: ${safeText(proposal.confirmCommand)}`);
+  }
 }
