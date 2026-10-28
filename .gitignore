@@ -1,2 +1,101 @@
-dist/
+# This repository is public. Ignore anything that is built, local, secret or
+# agent-generated. scripts/check-public.mjs also fails on any tracked file that
+# isn't on its allowlist, so a forced `git add -f` is still caught in CI.
+
+# Dependencies and build output
 node_modules/
+dist/
+*.tsbuildinfo
+.pnpm-store/
+.pnpm-debug.log*
+.npm/
+.yarn/
+.pnp.*
+
+# Packed tarballs (npm pack)
+*.tgz
+
+# Tests and coverage
+coverage/
+.nyc_output/
+.vitest/
+test-results/
+
+# Logs and temporary files
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+tmp/
+temp/
+*.tmp
+*.bak
+*.orig
+*.rej
+*.swp
+*~
+
+# Environment and secrets: never commit these
+.env
+.env.*
+!.env.example
+.envrc
+.npmrc
+.yarnrc
+.yarnrc.yml
+.netrc
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+*.cer
+*.der
+*.jks
+*.keystore
+*.gpg
+*.asc
+id_rsa*
+id_ed25519*
+id_ecdsa*
+*.secret
+*.secrets
+secrets.json
+secrets.y*ml
+credentials.json
+credentials.y*ml
+service.json
+*service-account*.json
+.clerk/
+.convex/
+.vercel/
+.stripe/
+gha-creds-*.json
+
+# Local CLI state (tokens live in the OS keychain, config may name orgs)
+.crisperio/
+
+# Agent, editor and tool state
+.claude/
+.cursor/
+.codex/
+.t3/
+.aider*
+.continue/
+.windsurf/
+.agents/
+CLAUDE.local.md
+AGENTS.local.md
+.idea/
+.vscode/
+*.code-workspace
+.history/
+
+# OS files
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+Thumbs.db
+ehthumbs.db
+Desktop.ini

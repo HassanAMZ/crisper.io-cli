@@ -19,8 +19,7 @@ export type ToolResult = { data: unknown; requestId: string | null };
 let lastRetryAfter: number | null = null;
 
 /**
- * Tool errors arrive as text. The server's messages are matched exactly
- * (`mcpError(...)` in convex/lib/mcpPolicy.ts, convex/mcp.ts, convex/mcpData.ts);
+ * Tool errors arrive as text. The server's messages are matched exactly;
  * anything else is a generic failure, never guessed from substrings.
  */
 const TOOL_ERRORS: Record<string, () => CliError> = {
