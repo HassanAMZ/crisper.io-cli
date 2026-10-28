@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { commandsFor, viaRunner } from "../src/invocation.js";
-import { commandOf, words } from "../src/shell.js";
+import { createProgram } from "../src/cli.js";
+import { commandOf, plan, words } from "../src/shell.js";
 import {
   SPINNER_DELAY_MS,
   isConnectFailure,
@@ -77,11 +78,12 @@ describe("retryingFetch", () => {
 describe("spinner", () => {
   afterEach(() => vi.useRealTimers());
 
-  it("shows nothing for a quick answer", async () => {
+  it("a quick answer gets no spinner, only the line with its time", async () => {
     const writes: string[] = [];
     const progress = spinner({ write: (t) => writes.push(t) });
     expect(await progress(async () => 42)).toBe(42);
-    expect(writes).toEqual([]);
+    expect(writes).toHaveLength(1);
+    expect(writes[0]).toMatch(/^\r\u001b\[2K✔ Crisper answered in \d+ ms\n$/);
   });
 
   it("shows while waiting and clears its line afterwards", async () => {
@@ -94,7 +96,7 @@ describe("spinner", () => {
     expect(writes.some((w) => w.includes("Waiting for Crisper"))).toBe(true);
     finish();
     await done;
-    expect(writes.at(-1)).toBe("\r\u001b[2K");
+    expect(writes.at(-1)).toMatch(/✔ Crisper answered in \d+ ms\n$/);
   });
 });
 
@@ -185,5 +187,54 @@ describe("interactive mode", () => {
     expect(commandOf("sites list")).toEqual(["sites", "list"]);
     expect(commandOf("crisper sites list")).toEqual(["sites", "list"]);
     expect(commandOf("npx crisperio sites list")).toEqual(["sites", "list"]);
+  });
+});
+
+describe("interactive mode asks for what's missing", () => {
+  const program = createProgram().program;
+
+  it("nothing typed lists every command; a group lists its own", () => {
+    const top = plan(program, []);
+    expect(top.kind).toBe("menu");
+    if (top.kind !== "menu") return;
+    expect(top.choices.map((c) => c.value)).toContain("dns");
+    expect(top.choices.map((c) => c.value)).not.toContain("help");
+    const dns = plan(program, ["dns"]);
+    expect(dns.kind === "menu" && dns.choices.map((c) => c.value)).toEqual([
+      "records",
+      "check",
+    ]);
+  });
+
+  it("runs whole commands as typed", () => {
+    expect(plan(program, ["dns", "check"])).toEqual({
+      kind: "run",
+      argv: ["dns", "check"],
+    });
+    expect(plan(program, ["orgs", "use"])).toEqual({
+      kind: "run",
+      argv: ["orgs", "use"],
+    });
+    expect(plan(program, ["--version"]).kind).toBe("run");
+  });
+
+  it("a command missing an argument or a required option gets its usage and the line back", () => {
+    const add = plan(program, ["sites", "add"]);
+    expect(add.kind).toBe("needs");
+    if (add.kind !== "needs") return;
+    expect(add.prefill).toBe("sites add ");
+    expect(add.usage).toContain("<domain>");
+    expect(add.usage).toContain("--type");
+    expect(plan(program, ["sites", "add", "a.com"]).kind).toBe("needs");
+    expect(
+      plan(program, ["sites", "add", "a.com", "--type", "shopify"]).kind,
+    ).toBe("run");
+  });
+
+  it("names a word that isn't a command", () => {
+    expect(plan(program, ["node", "x.js"])).toEqual({
+      kind: "unknown",
+      word: "node",
+    });
   });
 });

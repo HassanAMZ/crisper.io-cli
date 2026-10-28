@@ -66,19 +66,23 @@ export async function login(
   // The previous sign-in's choices, kept only if the same person signs in again.
   const previous = (await ctx.configs.read()).profiles[ctx.config.origin];
 
-  const { meta, start } = await waiting(async () => {
-    const meta = await discoverAuth(ctx.config.origin, ctx.fetcher);
-    const start = await requestDeviceCode(
-      {
-        endpoint: meta.deviceAuthorizationEndpoint,
-        clientId,
-        scope: ctx.config.scope,
-        resource: meta.resource,
-      },
-      { fetcher: ctx.fetcher },
-    );
-    return { meta, start };
-  }, "Contacting Crisper…");
+  const { meta, start } = await waiting(
+    async () => {
+      const meta = await discoverAuth(ctx.config.origin, ctx.fetcher);
+      const start = await requestDeviceCode(
+        {
+          endpoint: meta.deviceAuthorizationEndpoint,
+          clientId,
+          scope: ctx.config.scope,
+          resource: meta.resource,
+        },
+        { fetcher: ctx.fetcher },
+      );
+      return { meta, start };
+    },
+    "Contacting Crisper…",
+    "Sign-in code ready",
+  );
   const verificationUri = approvalUrl(start.verificationUri, meta.issuer);
   const url =
     (start.verificationUriComplete &&
@@ -116,6 +120,7 @@ export async function login(
         { fetcher: ctx.fetcher, now: ctx.now, signal: ctx.signal },
       ),
     "Waiting for you to approve in the browser…",
+    "Approved",
   );
   // Only now is the previous sign-in replaced, so a cancelled or failed
   // login leaves it working.
