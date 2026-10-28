@@ -54,6 +54,8 @@ export async function login(
 ) {
   const clientId = requireClientId(ctx.config);
   const deps = depsOf(ctx);
+  // The previous sign-in's choices, kept only if the same person signs in again.
+  const previous = (await ctx.configs.read()).profiles[ctx.config.origin];
   if (await hasSession(deps)) {
     try {
       await (await loadSession(deps)).signOut();
@@ -138,15 +140,30 @@ export async function login(
   // Prove the token at the real gate and learn which orgs it may use.
   const session = await sessionOf(ctx);
   let organizations: Organization[];
+  let userId: string | null;
   try {
-    organizations = (await fetchOrganizations(ctx, session)).organizations;
+    ({ organizations, userId } = await fetchOrganizations(ctx, session));
   } catch (error) {
     await session.signOut().catch(() => clearSession(deps));
     throw error;
   }
+  const samePerson =
+    userId !== null && previous?.subject != null && previous.subject === userId;
+  const previousOrg =
+    samePerson && organizations.some((o) => o.orgId === previous?.defaultOrgId)
+      ? (previous?.defaultOrgId ?? null)
+      : null;
   // Only an unambiguous choice is made for the customer.
-  const keep = organizations.length === 1 ? organizations[0]!.orgId : null;
-  await session.updateProfile({ defaultOrgId: keep });
+  const keep =
+    organizations.length === 1 ? organizations[0]!.orgId : previousOrg;
+  await session.updateProfile({
+    subject: userId,
+    defaultOrgId: keep,
+    defaultSiteId:
+      samePerson && keep === previous?.defaultOrgId
+        ? (previous?.defaultSiteId ?? null)
+        : null,
+  });
 
   return {
     data: {
@@ -184,6 +201,7 @@ export async function status(ctx: CommandContext) {
       await ctx.secrets.get(secretName(p.origin, p.clientId, "refresh")),
     ),
     defaultOrgId: p.defaultOrgId,
+    defaultSiteId: p.defaultSiteId ?? null,
   };
   return {
     data,
@@ -193,6 +211,9 @@ export async function status(ctx: CommandContext) {
         data.defaultOrgId
           ? `Default organization: ${safeText(data.defaultOrgId)}`
           : "No default organization. Run `crisper orgs use <orgId>`.",
+        ...(data.defaultSiteId
+          ? [`Default website: ${safeText(data.defaultSiteId)}`]
+          : []),
       ].join("\n"),
   };
 }

@@ -7,6 +7,26 @@ import {
   sessionOf,
 } from "./commands/context.js";
 import { orgsList, orgsUse } from "./commands/orgs.js";
+import {
+  billingCancel,
+  billingLink,
+  billingStatus,
+  dnsCheck,
+  dnsRecords,
+  eventsList,
+  eventsVerify,
+  installSnippet,
+  integrationsConnect,
+  integrationsList,
+} from "./commands/setup.js";
+import {
+  SITE_TYPES,
+  sitesAdd,
+  sitesHealth,
+  sitesList,
+  sitesStatus,
+  sitesUse,
+} from "./commands/sites.js";
 import { CliError, EXIT, sanitize } from "./errors.js";
 import {
   type Context,
@@ -23,6 +43,8 @@ export type Outcome = {
   data: unknown;
   human: (env: Envelope) => string;
   meta?: Record<string, unknown>;
+  /** The org and site the command resolved, for the envelope's context. */
+  context?: { orgId?: string | null; siteId?: string | null };
 };
 
 export type ProgramDeps = {
@@ -84,20 +106,29 @@ export function createProgram(deps: ProgramDeps = {}): {
     work: (ctx: CommandContext) => Promise<Outcome>,
   ) => {
     const mode = modeOf(argv);
-    let context: Context = { origin: "" };
     let out: Writer = writer;
+    let ctx: CommandContext | null = null;
+    // Origin plus whatever org and site the command resolved before it ended.
+    const contextOf = (): Context => ({
+      origin: ctx?.config.origin ?? "",
+      ...(ctx?.resolved.orgId ? { orgId: ctx.resolved.orgId } : {}),
+      ...(ctx?.resolved.siteId ? { siteId: ctx.resolved.siteId } : {}),
+    });
     try {
-      const ctx = makeContext(mode, signal);
+      ctx = makeContext(mode, signal);
       out = ctx.writer;
-      context = { origin: ctx.config.origin };
       const outcome = await work(ctx);
       emit(
         mode,
-        envelope(name, context, {
-          ok: true,
-          data: outcome.data,
-          ...(outcome.meta ? { meta: outcome.meta } : {}),
-        }),
+        envelope(
+          name,
+          { ...contextOf(), ...outcome.context },
+          {
+            ok: true,
+            data: outcome.data,
+            ...(outcome.meta ? { meta: outcome.meta } : {}),
+          },
+        ),
         outcome.human,
         out,
       );
@@ -106,7 +137,7 @@ export function createProgram(deps: ProgramDeps = {}): {
       const err = sanitize(error);
       emit(
         mode,
-        envelope(name, context, { ok: false, error: err }),
+        envelope(name, contextOf(), { ok: false, error: err }),
         () => "",
         out,
       );
@@ -154,6 +185,208 @@ export function createProgram(deps: ProgramDeps = {}): {
         orgsUse(ctx, await sessionOf(ctx), orgId),
       ),
     );
+
+  // Every site command takes the same two selectors.
+  type Target = { org?: string; site?: string };
+  const withSite = (cmd: Command) =>
+    cmd
+      .option("--org <orgId>", "organization (default: `crisper orgs use`)")
+      .option(
+        "--site <site>",
+        "website ID or domain (default: `crisper sites use`)",
+      );
+  const signedIn =
+    <F>(
+      fn: (
+        ctx: CommandContext,
+        session: Awaited<ReturnType<typeof sessionOf>>,
+        flags: F,
+      ) => Promise<Outcome>,
+    ) =>
+    (ctx: CommandContext, flags: F) =>
+      sessionOf(ctx).then((session) => fn(ctx, session, flags));
+
+  const sites = program
+    .command("sites")
+    .description("websites in an organization");
+  sites
+    .command("list")
+    .description("list websites")
+    .option("--org <orgId>", "organization (default: `crisper orgs use`)")
+    .action((flags: Target) =>
+      run("sites list", argvForRun, (ctx) => signedIn(sitesList)(ctx, flags)),
+    );
+  withSite(
+    sites
+      .command("use <site>")
+      .description("choose the website later commands use"),
+  ).action((site: string, flags: Target) =>
+    run("sites use", argvForRun, (ctx) =>
+      signedIn(sitesUse)(ctx, { ...flags, site }),
+    ),
+  );
+  withSite(
+    sites.command("status").description("setup progress and the next step"),
+  ).action((flags: Target) =>
+    run("sites status", argvForRun, (ctx) => signedIn(sitesStatus)(ctx, flags)),
+  );
+  withSite(
+    sites
+      .command("health")
+      .description("purchases and leads received today and this week"),
+  ).action((flags: Target) =>
+    run("sites health", argvForRun, (ctx) => signedIn(sitesHealth)(ctx, flags)),
+  );
+  sites
+    .command("add <domain>")
+    .description("add a website (no charge)")
+    .option("--org <orgId>", "organization (default: `crisper orgs use`)")
+    .requiredOption(
+      "--type <platform>",
+      `website platform: ${SITE_TYPES.join(", ")}`,
+    )
+    .option("--timezone <zone>", "IANA timezone (default: this computer's)")
+    .option("--currency <code>", "three-letter currency (default: USD)")
+    .option("--no-restricted", "Meta does not restrict this business category")
+    .option("--yes", "don't ask for confirmation", false)
+    .action(
+      (
+        domain: string,
+        flags: Target & {
+          type: string;
+          timezone?: string;
+          currency?: string;
+          restricted: boolean;
+          yes: boolean;
+        },
+      ) =>
+        run("sites add", argvForRun, (ctx) =>
+          sessionOf(ctx).then((session) =>
+            sitesAdd(ctx, session, domain, flags),
+          ),
+        ),
+    );
+
+  const billing = program
+    .command("billing")
+    .description("a website's subscription");
+  withSite(billing.command("status").description("subscription state")).action(
+    (flags: Target) =>
+      run("billing status", argvForRun, (ctx) =>
+        signedIn(billingStatus)(ctx, flags),
+      ),
+  );
+  withSite(
+    billing
+      .command("link")
+      .description(
+        "the page to choose a plan and pay (charges nothing by itself)",
+      )
+      .option("--open", "open it in the browser", false),
+  ).action((flags: Target & { open: boolean }) =>
+    run("billing link", argvForRun, (ctx) => signedIn(billingLink)(ctx, flags)),
+  );
+  withSite(
+    billing
+      .command("cancel")
+      .description("cancel at the end of the current period")
+      .option("--yes", "don't ask for confirmation", false),
+  ).action((flags: Target & { yes: boolean }) =>
+    run("billing cancel", argvForRun, (ctx) =>
+      signedIn(billingCancel)(ctx, flags),
+    ),
+  );
+
+  const dns = program
+    .command("dns")
+    .description("the tracking domain's DNS records");
+  withSite(
+    dns.command("records").description("records to add at your DNS provider"),
+  ).action((flags: Target) =>
+    run("dns records", argvForRun, (ctx) => signedIn(dnsRecords)(ctx, flags)),
+  );
+  withSite(
+    dns
+      .command("check")
+      .description("verify the records now (exit 6 until verified)"),
+  ).action((flags: Target) =>
+    run("dns check", argvForRun, (ctx) => signedIn(dnsCheck)(ctx, flags)),
+  );
+
+  const install = program.command("install").description("the tracking script");
+  withSite(
+    install.command("snippet").description("the script to add to the website"),
+  ).action((flags: Target) =>
+    run("install snippet", argvForRun, (ctx) =>
+      signedIn(installSnippet)(ctx, flags),
+    ),
+  );
+
+  const events = program.command("events").description("what Crisper received");
+  withSite(
+    events
+      .command("list")
+      .description("recent saved events, newest first")
+      .option("--type <type>", "purchase or lead")
+      .option("--limit <n>", "1 to 50 (default 20)"),
+  ).action((flags: Target & { type?: string; limit?: string }) =>
+    run("events list", argvForRun, (ctx) => signedIn(eventsList)(ctx, flags)),
+  );
+  withSite(
+    events
+      .command("verify")
+      .description("did a test purchase or lead arrive? (exit 6 if not)")
+      .requiredOption("--type <type>", "purchase or lead")
+      .option("--since <minutes>", "look back this far (default 30)")
+      .option("--wait <minutes>", "keep checking every minute, up to 10"),
+  ).action((flags: Target & { type?: string; since?: string; wait?: string }) =>
+    run("events verify", argvForRun, (ctx) =>
+      signedIn(eventsVerify)(ctx, flags),
+    ),
+  );
+
+  const integrations = program
+    .command("integrations")
+    .description("Meta, TikTok and other platforms");
+  withSite(
+    integrations.command("list").description("connected integrations"),
+  ).action((flags: Target) =>
+    run("integrations list", argvForRun, (ctx) =>
+      signedIn(integrationsList)(ctx, flags),
+    ),
+  );
+  withSite(
+    integrations
+      .command("connect")
+      .description(
+        "connect a Meta or TikTok pixel (the token is asked for, never a flag)",
+      )
+      .requiredOption("--platform <platform>", "meta or tiktok")
+      .requiredOption(
+        "--pixel <id>",
+        "Meta pixel (dataset) ID or TikTok pixel code",
+      )
+      .option("--label <name>", "name shown in Crisper")
+      .option(
+        "--token-stdin",
+        "read the access token from standard input",
+        false,
+      )
+      .option("--yes", "don't ask for confirmation", false),
+  ).action(
+    (
+      flags: Target & {
+        platform: string;
+        pixel: string;
+        label?: string;
+        tokenStdin: boolean;
+        yes: boolean;
+      },
+    ) =>
+      run("integrations connect", argvForRun, (ctx) =>
+        signedIn(integrationsConnect)(ctx, flags),
+      ),
+  );
 
   const runArgv = async (argv: string[]): Promise<number> => {
     argvForRun = argv;

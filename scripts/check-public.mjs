@@ -32,7 +32,9 @@ const MAX_FILE_BYTES = 200_000;
 const MAX_PACKED_BYTES = 500_000;
 
 // Anything here must never appear in this repository or the package.
-const FORBIDDEN = [
+// Secrets can't be silenced; a line marked ALLOW_MARKER may contain a
+// reference (for test fixtures that must look real), never a secret.
+const SECRETS = [
   ["private key", /-----BEGIN [A-Z ]*PRIVATE KEY-----/],
   ["Stripe or Clerk secret key", /\b[sr]k_(live|test)_[A-Za-z0-9]{8,}/],
   ["Stripe webhook secret", /\bwhsec_[A-Za-z0-9]{8,}/],
@@ -45,13 +47,14 @@ const FORBIDDEN = [
   ["Convex deploy key", /\b(prod|dev|preview):[a-z0-9-]+\|[A-Za-z0-9+/=]{20,}/],
   ["JSON web token", /\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/],
   ["credential in a URL", /\b[a-z][a-z0-9+.-]*:\/\/[^\s/:@"'`]+:[^\s/@"'`]+@/i],
+];
+const REFERENCES = [
   ["Convex deployment URL", /\b[a-z]+-[a-z]+-\d+\.convex\.(cloud|site)\b/],
   ["Clerk development instance", /\.clerk\.accounts\.dev\b/],
-  ["local home directory", /\/(Users|home)\/[A-Za-z0-9._-]+\//],
+  ["local home directory", /(\/(Users|home)\/[A-Za-z0-9._-]+\/|\b[A-Z]:\\\\?Users\\\\?[A-Za-z0-9._ -]+)/],
   ["private Crisper path", /\b(agent-context|docs\/agents|convex\/[a-z]+\.ts)\b/], // public-check: allow
   ["personal email address", /\b[A-Za-z0-9._%+-]+@(gmail|outlook|hotmail|yahoo|icloud)\.com\b/i],
 ];
-// A line may opt out with this marker, for test fixtures that must look real.
 const ALLOW_MARKER = "public-check: allow";
 
 const failures = [];
@@ -59,8 +62,8 @@ const fail = (message) => failures.push(message);
 
 function scan(label, text) {
   text.split("\n").forEach((line, index) => {
-    if (line.includes(ALLOW_MARKER)) return;
-    for (const [name, pattern] of FORBIDDEN)
+    const checks = line.includes(ALLOW_MARKER) ? SECRETS : [...SECRETS, ...REFERENCES];
+    for (const [name, pattern] of checks)
       if (pattern.test(line)) fail(`${label}:${index + 1}: ${name}`);
   });
 }

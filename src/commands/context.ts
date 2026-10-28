@@ -1,7 +1,9 @@
+import { abortableSleep } from "../auth/device.js";
 import { type Session, loadSession } from "../auth/session.js";
 import { ConfigStore, KeyringStore, type SecretStore } from "../auth/store.js";
 import { type CliConfig, resolveConfig } from "../config.js";
 import { type OutputMode, type Writer, stdio } from "../output.js";
+import { type Prompter, terminal } from "../prompt.js";
 
 /** Everything a command needs, built once per invocation and replaceable in tests. */
 export type CommandContext = {
@@ -15,6 +17,11 @@ export type CommandContext = {
   openBrowser: (url: string) => Promise<void>;
   signal: AbortSignal;
   now: () => number;
+  prompter: Prompter;
+  /** Waits between polls (events verify); replaceable so tests don't sleep. */
+  sleep: (ms: number) => Promise<void>;
+  /** The org and site this command resolved, reported in success and failure envelopes. */
+  resolved: { orgId?: string; siteId?: string };
 };
 
 export function defaultContext(
@@ -35,6 +42,9 @@ export function defaultContext(
     },
     signal,
     now: Date.now,
+    prompter: terminal,
+    sleep: (ms) => abortableSleep(ms, signal),
+    resolved: {},
   };
 }
 

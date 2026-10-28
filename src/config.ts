@@ -5,10 +5,12 @@ export const SERVICE_NAME = "crisperio";
 
 /**
  * First-party public Clerk OAuth clients, by Crisper origin. There is no secret:
- * a public client identifies itself by ID alone. The production entry is added
- * when the production app is created at publish time (spec, founder decision 6).
+ * a public client identifies itself by ID alone. Other origins (local or
+ * staging servers) set CRISPER_OAUTH_CLIENT_ID.
  */
-const CLIENT_IDS: Record<string, string> = {};
+const CLIENT_IDS: Record<string, string> = {
+  "https://crisper.io": "I4beUQQdtiLgmMUb",
+};
 
 export type CliConfig = {
   origin: string;
