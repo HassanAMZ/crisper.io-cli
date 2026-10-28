@@ -28,6 +28,7 @@ import {
   sitesUse,
 } from "./commands/sites.js";
 import { CliError, EXIT, sanitize } from "./errors.js";
+import { runnerAware } from "./invocation.js";
 import {
   type Context,
   type Envelope,
@@ -66,7 +67,7 @@ export function createProgram(deps: ProgramDeps = {}): {
   program: Command;
   run: (argv: string[]) => Promise<number>;
 } {
-  const writer = deps.writer ?? stdio;
+  const writer = deps.writer ?? runnerAware(stdio);
   const signal = deps.signal ?? new AbortController().signal;
   const env = deps.env ?? process.env;
   const makeContext = deps.context ?? defaultContext;
