@@ -298,6 +298,7 @@ describe("first run on a fresh machine", () => {
           ask: async () => "yes",
           secret: async () => "",
           stdin: async () => "",
+          choose: async () => null,
         },
         sleep: async () => {},
         resolved: {},

@@ -1,6 +1,7 @@
 import { createInterface } from "node:readline";
 
 import { CliError, EXIT } from "./errors.js";
+import { type Choice, pick } from "./picker.js";
 
 /**
  * Reading from the person at the terminal. Secrets are read with echo off and
@@ -13,6 +14,8 @@ export type Prompter = {
   secret(question: string): Promise<string>;
   /** Read all of standard input (for `--token-stdin`). */
   stdin(): Promise<string>;
+  /** Choose one from a list with the arrow keys; null when skipped. */
+  choose(question: string, choices: Choice[]): Promise<string | null>;
 };
 
 export const terminal: Prompter = {
@@ -99,6 +102,7 @@ export const terminal: Prompter = {
     for await (const chunk of process.stdin) chunks.push(Buffer.from(chunk));
     return Buffer.concat(chunks).toString("utf8").trim();
   },
+  choose: pick,
 };
 
 /**

@@ -90,18 +90,76 @@ export async function orgsList(ctx: CommandContext, session: Session) {
       };
       const lines = [orgsTable(d.organizations, d.defaultOrgId)];
       if (d.organizations.length > 1 && !d.defaultOrgId)
-        lines.push("", "Pick one for later commands: crisper orgs use <orgId>");
+        lines.push("", "Pick one for later commands: crisper orgs use");
       return lines.join("\n");
     },
   };
 }
 
+/** A person at a terminal who can answer an arrow-key list. */
+export const canChoose = (ctx: CommandContext) =>
+  ctx.interactive && !ctx.mode.json;
+
+/** `orgs use` without an org ID only works where the list can be shown. */
+export function requireOrgIdUnlessChoosing(
+  ctx: CommandContext,
+  orgId: string | undefined,
+) {
+  if (!orgId && !canChoose(ctx))
+    throw new CliError("INVALID_ARGUMENT", "Name the organization to use.", {
+      exit: EXIT.usage,
+      next: "Run `crisper orgs use <orgId>`; `crisper orgs list` shows the IDs.",
+    });
+}
+
+/** Ask which organization to use. Null when skipped. */
+export function chooseOrganization(
+  ctx: CommandContext,
+  organizations: Organization[],
+  current: string | null = null,
+): Promise<string | null> {
+  const names = organizations.map((o) => safeText(o.name) || "(no name)");
+  const width = Math.max(...names.map((n) => n.length));
+  const choices = organizations.map((o, i) => {
+    const sites =
+      o.siteCount === null
+        ? ""
+        : `${o.siteCount} site${o.siteCount === 1 ? "" : "s"}`;
+    const now = o.orgId === current ? "  (current)" : "";
+    return {
+      label: `${names[i]!.padEnd(width)}  ${sites}${now}`.trimEnd(),
+      value: o.orgId,
+    };
+  });
+  return ctx.prompter.choose(
+    "Which organization should later commands use?",
+    choices,
+  );
+}
+
 export async function orgsUse(
   ctx: CommandContext,
   session: Session,
-  orgId: string,
+  orgId: string | undefined,
 ) {
+  requireOrgIdUnlessChoosing(ctx, orgId);
   const { organizations } = await fetchOrganizations(ctx, session);
+  if (!orgId) {
+    if (organizations.length === 0)
+      throw new CliError("ACCESS_DENIED", orgsTable([], null), {
+        exit: EXIT.denied,
+      });
+    const chosen = await chooseOrganization(
+      ctx,
+      organizations,
+      session.profile.defaultOrgId,
+    );
+    if (!chosen)
+      throw new CliError("INTERRUPTED", "Nothing was changed.", {
+        exit: EXIT.interrupted,
+      });
+    orgId = chosen;
+  }
   const match = organizations.find((o) => o.orgId === orgId);
   if (!match)
     throw new CliError(

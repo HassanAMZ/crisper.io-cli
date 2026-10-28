@@ -9,12 +9,6 @@ import { type CommandContext } from "../src/commands/context.js";
 import { type OutputMode, type Writer } from "../src/output.js";
 import { type Prompter } from "../src/prompt.js";
 
-const fakePrompter: Prompter = {
-  ask: async () => "yes",
-  secret: async () => "",
-  stdin: async () => "",
-};
-
 /**
  * A fake Crisper + Clerk behind one fetch: resource metadata, issuer
  * metadata, device grant, refresh, revoke, and a minimal MCP server that
@@ -173,6 +167,19 @@ function harness() {
   const secrets = new MemoryStore();
   let configs: ConfigStore;
   let clock = 1_700_000_000_000;
+  let interactive = false;
+  /** What the person picks from each arrow-key list, in order (null: Esc). */
+  const picks: (string | null)[] = [];
+  const asked: string[][] = [];
+  const fakePrompter: Prompter = {
+    ask: async () => "yes",
+    secret: async () => "",
+    stdin: async () => "",
+    choose: async (_question, choices) => {
+      asked.push(choices.map((c) => c.value));
+      return picks.shift() ?? null;
+    },
+  };
   const context = (mode: OutputMode, signal: AbortSignal): CommandContext => ({
     config: {
       origin: ORIGIN,
@@ -184,7 +191,7 @@ function harness() {
     secrets,
     configs,
     fetcher: makeFetch(state),
-    interactive: false,
+    interactive,
     openBrowser: async () => {},
     signal,
     now: () => clock,
@@ -204,6 +211,9 @@ function harness() {
     err,
     secrets,
     run,
+    picks,
+    asked,
+    setInteractive: (v: boolean) => (interactive = v),
     advance: (ms: number) => {
       clock += ms;
     },
@@ -349,6 +359,36 @@ describe("crisper (command contract)", () => {
     expect(await h.secrets.get(secretName(ORIGIN, "cid", "access"))).toBe(
       "access-2",
     );
+  }, 15_000);
+
+  it("a cancelled or refused second login leaves the first one working", async () => {
+    await h.run("--json", "login", "--no-browser");
+    h.state.deny = true;
+    expect(await h.run("--json", "login", "--no-browser")).toBe(3);
+    expect(h.state.revoked).toEqual([]);
+    expect(await h.run("--json", "orgs", "list")).toBe(0);
+  }, 15_000);
+
+  it("at a terminal, login and orgs use offer a list when there are several orgs", async () => {
+    h.state.orgs = [
+      { orgId: "org_1", name: "A", role: "org:admin", siteCount: 1 },
+      { orgId: "org_2", name: "B", role: "org:admin", siteCount: 3 },
+    ];
+    h.setInteractive(true);
+    h.picks.push("org_2");
+    expect(await h.run("login", "--no-browser")).toBe(0);
+    expect(h.asked).toEqual([["org_1", "org_2"]]);
+    expect(h.out.join("\n")).toContain("Using B (org_2) for later commands.");
+    expect(await h.run("--json", "auth", "status")).toBe(0);
+    expect(JSON.parse(h.out[0]!).data.defaultOrgId).toBe("org_2");
+    // orgs use with no ID asks; Esc changes nothing and exits 130.
+    expect(await h.run("orgs", "use")).toBe(130);
+    h.picks.push("org_1");
+    expect(await h.run("orgs", "use")).toBe(0);
+    expect(h.out.join("\n")).toContain("Using A (org_1)");
+    // Without a terminal (or with --json), the ID is required.
+    expect(await h.run("--json", "orgs", "use")).toBe(2);
+    expect(h.asked).toHaveLength(3);
   }, 15_000);
 
   it("keeps the chosen org only when the same person signs in again", async () => {
