@@ -1,11 +1,10 @@
-import { createInterface } from "node:readline";
-
 import { type Command } from "commander";
 
 import { ConfigStore } from "./auth/store.js";
 import { createProgram } from "./cli.js";
 import { resolveConfig } from "./config.js";
 import { safeText } from "./output.js";
+import { type Suggestion, readLine } from "./lineEditor.js";
 import { type Choice, pick } from "./picker.js";
 import { VERSION } from "./version.js";
 
@@ -128,36 +127,32 @@ const dim = (text: string) =>
     ? `\u001b[2m${text}\u001b[22m`
     : text;
 
-function ask(question: string, history: string[], prefill = "") {
-  const rl = createInterface({
-    input: process.stdin,
-    output: process.stderr,
-    history,
-    historySize: 100,
-    removeHistoryDuplicates: true,
-  });
-  return new Promise<string | null>((resolve) => {
-    let answered = false;
-    rl.once("SIGINT", () => {
-      answered = true;
-      // Ctrl-C on a half-typed line clears it; on an empty one, it's a leave.
-      const typed = rl.line.length > 0;
-      rl.close();
-      resolve(typed ? "" : "\u0003");
-    });
-    rl.once("close", () => {
-      if (!answered) resolve(null); // Ctrl-D
-    });
-    rl.question(question, (answer) => {
-      answered = true;
-      // readline keeps the newest entry first; carry it to the next prompt.
-      const latest = (rl as unknown as { history?: string[] }).history;
-      if (latest) history.splice(0, history.length, ...latest);
-      rl.close();
-      resolve(answer);
-    });
-    if (prefill) rl.write(prefill);
-  });
+/** Every command a person can run, for the suggestions under the prompt. */
+export function suggestionsFor(program: Command): Suggestion[] {
+  const out: Suggestion[] = [];
+  const walk = (cmd: Command, path: string[]) => {
+    for (const c of subcommands(cmd)) {
+      const here = [...path, c.name()];
+      if (subcommands(c).length > 0) walk(c, here);
+      else
+        out.push({
+          command: here.join(" "),
+          usage: [
+            ...c.registeredArguments.map((a) =>
+              a.required ? `<${a.name()}>` : `[${a.name()}]`,
+            ),
+            ...c.options.filter((o) => o.mandatory).map((o) => o.flags),
+          ].join(" "),
+          description: c.description(),
+        });
+    }
+  };
+  walk(program, []);
+  out.push(
+    { command: "help", usage: "", description: "every command and option" },
+    { command: "exit", usage: "", description: "leave Crisper" },
+  );
+  return out;
 }
 
 export async function shell(): Promise<number> {
@@ -167,23 +162,27 @@ export async function shell(): Promise<number> {
   );
   err(
     dim(
-      "Press Enter for a list of everything · sites status · orgs use · sites use · exit",
+      "Start typing to see matching commands, or press Enter for a menu · exit to leave",
     ),
   );
   if ((await where()) === "not signed in")
     err("You're not signed in yet. Type: login");
   const history: string[] = [];
+  const suggestions = suggestionsFor(createProgram().program);
   let lastWasCtrlC = false;
   let prefill = "";
   for (;;) {
     err("");
     const at = await where();
-    const line = await ask(
+    const line = await readLine(
       `crisper${at ? ` (${at})` : ""} › `,
+      suggestions,
       history,
       prefill,
     );
     prefill = "";
+    if (line && line !== "\u0003" && line.trim() && line !== history[0])
+      history.unshift(line);
     if (line === null) break;
     if (line === "\u0003") {
       if (lastWasCtrlC) break;
