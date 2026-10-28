@@ -13,6 +13,7 @@ const TRACKED_ALLOWLIST = [
   /^\.github\/workflows\/[a-z0-9-]+\.yml$/,
   /^\.gitignore$/,
   /^README\.md$/,
+  /^skills\/crisper\/SKILL\.md$/,
   /^LICENSE(\.md)?$/,
   /^package\.json$/,
   /^pnpm-lock\.yaml$/,

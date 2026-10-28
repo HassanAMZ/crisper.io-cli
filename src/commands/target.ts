@@ -1,8 +1,9 @@
 import { type Session } from "../auth/session.js";
 import { CliError, EXIT } from "../errors.js";
 import { callTool } from "../mcp/client.js";
+import { safeText } from "../output.js";
 import { type CommandContext } from "./context.js";
-import { fetchOrganizations } from "./orgs.js";
+import { canChoose, fetchOrganizations } from "./orgs.js";
 
 export type Site = {
   websiteId: string;
@@ -148,4 +149,41 @@ export async function resolveSite(
       next: "Run `crisper sites list` to see your websites.",
     },
   );
+}
+
+/** Ask which website to use, with the arrow keys. Null when skipped. */
+export function chooseSite(
+  ctx: CommandContext,
+  sites: Site[],
+  current: string | null = null,
+): Promise<string | null> {
+  const domains = sites.map((s) => safeText(s.domain));
+  const width = Math.max(...domains.map((d) => d.length));
+  return ctx.prompter.choose(
+    "Which website should later commands use?",
+    sites.map((s, i) => ({
+      label:
+        `${domains[i]!.padEnd(width)}  ${safeText(s.siteType)}${s.websiteId === current ? "  (current)" : ""}`.trimEnd(),
+      value: s.websiteId,
+    })),
+  );
+}
+
+/**
+ * Right after an organization is chosen: its only website, or one picked
+ * from a list by a person at a terminal. Null when there's none to pick,
+ * no one to ask, or the person skipped.
+ */
+export async function siteAfterChoosingOrg(
+  ctx: CommandContext,
+  session: Session,
+  orgId: string,
+  current: string | null = null,
+): Promise<Site | null> {
+  if (!canChoose(ctx)) return null;
+  const { sites, truncated } = await listSites(ctx, session, orgId);
+  if (sites.length === 1 && !truncated) return sites[0]!;
+  if (sites.length === 0) return null;
+  const chosen = await chooseSite(ctx, sites, current);
+  return sites.find((s) => s.websiteId === chosen) ?? null;
 }

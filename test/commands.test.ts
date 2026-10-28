@@ -25,6 +25,9 @@ function harness() {
   const tools: Record<string, (args: Record<string, unknown>) => Reply> = {};
   const calls: { name: string; args: Record<string, unknown> }[] = [];
   const answers: string[] = [];
+  const requests: { url: string; method: string }[] = [];
+  let asked = 0;
+  let stdinReads = 0;
   let secret = "";
   let secretAsked = 0;
   let stdin = "";
@@ -46,6 +49,7 @@ function harness() {
     init?: RequestInit,
   ) => {
     const url = String(input);
+    requests.push({ url, method: init?.method ?? "GET" });
     if (url !== `${ORIGIN}/api/mcp`) return new Response("", { status: 404 });
     if (init?.method === "GET") return new Response("", { status: 405 });
     if (init?.method === "DELETE") return new Response("", { status: 200 });
@@ -92,12 +96,18 @@ function harness() {
   }) as unknown as typeof fetch;
 
   const prompter: Prompter = {
-    ask: async () => answers.shift() ?? "",
+    ask: async () => {
+      asked += 1;
+      return answers.shift() ?? "";
+    },
     secret: async () => {
       secretAsked += 1;
       return secret;
     },
-    stdin: async () => stdin,
+    stdin: async () => {
+      stdinReads += 1;
+      return stdin;
+    },
     choose: async () => null,
   };
   const context = (mode: OutputMode, signal: AbortSignal): CommandContext => ({
@@ -121,6 +131,9 @@ function harness() {
   return {
     tools,
     calls,
+    requests,
+    asked: () => asked,
+    stdinReads: () => stdinReads,
     out,
     err,
     answers,
@@ -165,6 +178,7 @@ function harness() {
       out.length = 0;
       err.length = 0;
       calls.length = 0;
+      requests.length = 0;
       const { run } = createProgram({ context, writer, argv });
       return run(argv);
     },
@@ -173,6 +187,7 @@ function harness() {
       out.length = 0;
       err.length = 0;
       calls.length = 0;
+      requests.length = 0;
       const { run } = createProgram({
         context,
         writer,
@@ -186,6 +201,7 @@ function harness() {
       out.length = 0;
       err.length = 0;
       calls.length = 0;
+      requests.length = 0;
       const controller = new AbortController();
       controller.abort();
       const { run } = createProgram({
@@ -202,7 +218,12 @@ function harness() {
   };
 }
 
-const ORG = { orgId: "org_1", name: "Clinic", role: "org:admin", siteCount: 2 };
+const ORG = {
+  orgId: "org_0000000001",
+  name: "Clinic",
+  role: "org:admin",
+  siteCount: 2,
+};
 const SITES = [
   {
     websiteId: "w1",
@@ -232,20 +253,20 @@ describe("site commands", () => {
       },
     });
     h.tools.list_sites = () => ({
-      result: { orgId: "org_1", sites: SITES, truncated: false },
+      result: { orgId: "org_0000000001", sites: SITES, truncated: false },
     });
   });
 
   it("lists sites of the only organization", async () => {
     expect(await h.run("--json", "sites", "list")).toBe(0);
     const env = h.json();
-    expect(env.context.orgId).toBe("org_1");
+    expect(env.context.orgId).toBe("org_0000000001");
     expect(env.data.sites.map((s: { domain: string }) => s.domain)).toEqual([
       "clinic.com",
       "shop.clinic.com",
     ]);
     expect(h.calls.find((c) => c.name === "list_sites")?.args).toEqual({
-      orgId: "org_1",
+      orgId: "org_0000000001",
     });
   });
 
@@ -253,7 +274,7 @@ describe("site commands", () => {
     h.tools.get_site_setup = () => ({
       result: {
         websiteId: "w2",
-        orgId: "org_1",
+        orgId: "org_0000000001",
         domain: "shop.clinic.com",
         setup: {
           billing: true,
@@ -296,7 +317,7 @@ describe("site commands", () => {
     h.tools.get_dns_records = () => ({
       result: {
         websiteId: "w1",
-        orgId: "org_1",
+        orgId: "org_0000000001",
         domain: "clinic.com",
         trackingDomain: "t.clinic.com",
         state: "waiting",
@@ -315,13 +336,16 @@ describe("site commands", () => {
     h.tools.get_connection = () => ({
       result: {
         connected: true,
-        organizations: [ORG, { ...ORG, orgId: "org_2", name: "Other" }],
+        organizations: [
+          ORG,
+          { ...ORG, orgId: "org_0000000002", name: "Other" },
+        ],
         instructions: "",
       },
     });
-    expect(await h.run("--json", "orgs", "use", "org_2")).toBe(0);
+    expect(await h.run("--json", "orgs", "use", "org_0000000002")).toBe(0);
     h.tools.list_sites = () => ({
-      result: { orgId: "org_2", sites: [], truncated: false },
+      result: { orgId: "org_0000000002", sites: [], truncated: false },
     });
     expect(await h.run("--json", "dns", "records")).toBe(6);
   });
@@ -352,7 +376,7 @@ describe("site commands", () => {
     h.tools.create_site = (args) => ({
       result: {
         websiteId: "w9",
-        orgId: "org_1",
+        orgId: "org_0000000001",
         domain: String(args.domain),
         status: "created",
         replay: false,
@@ -379,7 +403,7 @@ describe("site commands", () => {
     ).toBe(0);
     const args = h.calls.find((c) => c.name === "create_site")!.args;
     expect(args).toMatchObject({
-      orgId: "org_1",
+      orgId: "org_0000000001",
       domain: "new.com",
       siteType: "shopify",
       currency: "USD",
@@ -421,7 +445,7 @@ describe("error codes from the server", () => {
       result: { connected: true, organizations: [ORG], instructions: "" },
     });
     h.tools.list_sites = () => ({
-      result: { orgId: "org_1", sites: [SITES[0]], truncated: false },
+      result: { orgId: "org_0000000001", sites: [SITES[0]], truncated: false },
     });
   });
 
@@ -462,7 +486,11 @@ describe("error codes from the server", () => {
 
 describe("dns, events, integrations and billing", () => {
   let h: ReturnType<typeof harness>;
-  const site = { websiteId: "w1", orgId: "org_1", domain: "clinic.com" };
+  const site = {
+    websiteId: "w1",
+    orgId: "org_0000000001",
+    domain: "clinic.com",
+  };
   beforeEach(async () => {
     h = harness();
     await h.init();
@@ -470,7 +498,7 @@ describe("dns, events, integrations and billing", () => {
       result: { connected: true, organizations: [ORG], instructions: "" },
     });
     h.tools.list_sites = () => ({
-      result: { orgId: "org_1", sites: [SITES[0]], truncated: false },
+      result: { orgId: "org_0000000001", sites: [SITES[0]], truncated: false },
     });
   });
 
@@ -502,7 +530,7 @@ describe("dns, events, integrations and billing", () => {
       return {
         result: {
           websiteId: "w1",
-          orgId: "org_1",
+          orgId: "org_0000000001",
           event: args.event,
           since: "t",
           checkedAt: "t",
@@ -541,7 +569,7 @@ describe("dns, events, integrations and billing", () => {
     h.tools.check_event = () => ({
       result: {
         websiteId: "w1",
-        orgId: "org_1",
+        orgId: "org_0000000001",
         event: "GenerateLead",
         since: "t",
         checkedAt: "t",
@@ -576,7 +604,6 @@ describe("dns, events, integrations and billing", () => {
     h.answers.push("no");
     expect(
       await h.run(
-        "--json",
         "integrations",
         "connect",
         "--platform",
@@ -589,7 +616,6 @@ describe("dns, events, integrations and billing", () => {
     h.answers.push("yes");
     expect(
       await h.run(
-        "--json",
         "integrations",
         "connect",
         "--platform",
@@ -692,13 +718,13 @@ describe("dns, events, integrations and billing", () => {
             },
           };
     h.answers.push("yes");
-    expect(await h.run("--json", "billing", "cancel")).toBe(0);
+    expect(await h.run("billing", "cancel")).toBe(0);
     const cancels = h.calls.filter((c) => c.name === "cancel_billing");
     expect(cancels.map((c) => c.args.confirmation)).toEqual([
       undefined,
       "c-123",
     ]);
-    expect(h.json().data.status).toBe("cancel_requested");
+    expect(h.out.join("\n")).toContain("ends on 2026-11-28");
   });
 
   it("billing cancel without a yes changes nothing", async () => {
@@ -730,7 +756,11 @@ describe("dns, events, integrations and billing", () => {
 
 describe("review round 1 regressions (Astra)", () => {
   let h: ReturnType<typeof harness>;
-  const site = { websiteId: "w1", orgId: "org_1", domain: "clinic.com" };
+  const site = {
+    websiteId: "w1",
+    orgId: "org_0000000001",
+    domain: "clinic.com",
+  };
   beforeEach(async () => {
     h = harness();
     await h.init();
@@ -738,13 +768,13 @@ describe("review round 1 regressions (Astra)", () => {
       result: { connected: true, organizations: [ORG], instructions: "" },
     });
     h.tools.list_sites = () => ({
-      result: { orgId: "org_1", sites: [SITES[0]], truncated: false },
+      result: { orgId: "org_0000000001", sites: [SITES[0]], truncated: false },
     });
   });
 
   it("never picks 'the only site' from a truncated list", async () => {
     h.tools.list_sites = () => ({
-      result: { orgId: "org_1", sites: [SITES[0]], truncated: true },
+      result: { orgId: "org_0000000001", sites: [SITES[0]], truncated: true },
     });
     h.tools.cancel_billing = () => ({
       result: { ...site, status: "already_scheduled", currentPeriodEnd: null },
@@ -860,14 +890,17 @@ describe("review round 1 regressions (Astra)", () => {
     });
     expect(await h.run("--json", "dns", "records")).toBe(6);
     const env = h.json();
-    expect(env.context).toMatchObject({ orgId: "org_1", siteId: "w1" });
+    expect(env.context).toMatchObject({
+      orgId: "org_0000000001",
+      siteId: "w1",
+    });
     expect(env.data.state).toBe("not_created");
   });
 
   const check = (found: boolean, extra: Record<string, unknown> = {}) => ({
     result: {
       websiteId: "w1",
-      orgId: "org_1",
+      orgId: "org_0000000001",
       event: "Purchase",
       since: "s",
       checkedAt: "c",
@@ -972,11 +1005,15 @@ describe("review round 1 regressions (Astra)", () => {
 
 describe("review round 2 regressions (Astra r2, Fable)", () => {
   let h: ReturnType<typeof harness>;
-  const site = { websiteId: "w1", orgId: "org_1", domain: "clinic.com" };
+  const site = {
+    websiteId: "w1",
+    orgId: "org_0000000001",
+    domain: "clinic.com",
+  };
   const check = (found: boolean, extra: Record<string, unknown> = {}) => ({
     result: {
       websiteId: "w1",
-      orgId: "org_1",
+      orgId: "org_0000000001",
       event: "Purchase",
       since: new Date(h.now() - 30 * 60_000).toISOString(),
       checkedAt: new Date(h.now()).toISOString(),
@@ -995,7 +1032,7 @@ describe("review round 2 regressions (Astra r2, Fable)", () => {
       result: { connected: true, organizations: [ORG], instructions: "" },
     });
     h.tools.list_sites = () => ({
-      result: { orgId: "org_1", sites: [SITES[0]], truncated: false },
+      result: { orgId: "org_0000000001", sites: [SITES[0]], truncated: false },
     });
   });
 
@@ -1003,7 +1040,7 @@ describe("review round 2 regressions (Astra r2, Fable)", () => {
     h.tools.create_site = () => ({
       result: {
         websiteId: "w9",
-        orgId: "org_1",
+        orgId: "org_0000000001",
         domain: "n.com",
         status: "created",
         replay: false,
@@ -1133,15 +1170,25 @@ describe("review round 2 regressions (Astra r2, Fable)", () => {
     h.tools.list_sites = (args) => ({
       result: {
         orgId: String(args.orgId),
-        sites: args.orgId === "org_1" ? [SITES[0]] : [SITES[1]],
+        sites: args.orgId === "org_0000000001" ? [SITES[0]] : [SITES[1]],
         truncated: false,
       },
     });
     expect(await h.run("--json", "sites", "use", "clinic.com")).toBe(0);
-    expect(await h.run("--json", "dns", "records", "--org", "org_2")).toBe(2);
+    expect(
+      await h.run("--json", "dns", "records", "--org", "org_0000000002"),
+    ).toBe(2);
     expect(h.json().error.message).toContain("different organization");
     expect(
-      await h.run("--json", "dns", "records", "--org", "org_2", "--site", "w1"),
+      await h.run(
+        "--json",
+        "dns",
+        "records",
+        "--org",
+        "org_0000000002",
+        "--site",
+        "w1",
+      ),
     ).toBe(4);
   });
 
@@ -1149,7 +1196,7 @@ describe("review round 2 regressions (Astra r2, Fable)", () => {
     h.tools.create_site = () => ({
       result: {
         websiteId: "w9",
-        orgId: "org_1",
+        orgId: "org_0000000001",
         domain: "n.com",
         status: "created",
         replay: false,
@@ -1167,7 +1214,7 @@ describe("review round 2 regressions (Astra r2, Fable)", () => {
         "--type",
         "other",
         "--org",
-        "org_1",
+        "org_0000000001",
         "--yes",
       ),
     ).toBe(0);
@@ -1197,7 +1244,7 @@ describe("review round 3 regressions (Astra r3, Fable r2)", () => {
       result: { connected: true, organizations: [ORG], instructions: "" },
     });
     h.tools.list_sites = () => ({
-      result: { orgId: "org_1", sites: [SITES[0]], truncated: false },
+      result: { orgId: "org_0000000001", sites: [SITES[0]], truncated: false },
     });
   });
 
@@ -1242,7 +1289,7 @@ describe("review round 3 regressions (Astra r3, Fable r2)", () => {
       return {
         result: {
           websiteId: "w1",
-          orgId: "org_1",
+          orgId: "org_0000000001",
           event: "Purchase",
           since: new Date(
             h.now() - Number(args.sinceMinutes) * 60_000,
@@ -1284,7 +1331,7 @@ describe("review round 3 regressions (Astra r3, Fable r2)", () => {
       return {
         result: {
           websiteId: "w1",
-          orgId: "org_1",
+          orgId: "org_0000000001",
           event: "Purchase",
           since: new Date(arrived - 60_000).toISOString(),
           checkedAt: new Date(arrived).toISOString(),
@@ -1320,7 +1367,7 @@ describe("review round 3 regressions (Astra r3, Fable r2)", () => {
     h.tools.get_site_setup = () => ({
       result: {
         websiteId: "w1",
-        orgId: "org_1",
+        orgId: "org_0000000001",
         domain: "clinic.com",
         setup: {
           billing: false,
@@ -1339,13 +1386,13 @@ describe("review round 3 regressions (Astra r3, Fable r2)", () => {
         "sites",
         "status",
         "--org",
-        "org_1",
+        "org_0000000001",
         "--site",
         "clinic.com",
       ),
     ).toBe(0);
     expect(h.json().data.next.command).toBe(
-      "crisper billing link --org org_1 --site clinic.com",
+      "crisper billing link --org org_0000000001 --site clinic.com",
     );
   });
 
@@ -1361,7 +1408,7 @@ describe("review round 3 regressions (Astra r3, Fable r2)", () => {
       return {
         result: {
           websiteId: "w1",
-          orgId: "org_1",
+          orgId: "org_0000000001",
           event: "Purchase",
           since: "s",
           checkedAt: "c",
@@ -1389,5 +1436,287 @@ describe("review round 3 regressions (Astra r3, Fable r2)", () => {
     expect(sent[0]).toBe(1);
     expect(sent[1]).toBe(2);
     expect(h.err.join("\n")).toContain("Trying again");
+  });
+});
+
+describe("agent approval and local validation", () => {
+  let h: ReturnType<typeof harness>;
+  beforeEach(async () => {
+    h = harness();
+    await h.init();
+    h.tools.get_connection = () => ({ result: { organizations: [ORG] } });
+    h.tools.list_sites = () => ({
+      result: { sites: [SITES[0]], truncated: false },
+    });
+    h.tools.cancel_billing = () => ({
+      result: {
+        status: "confirmation_required",
+        confirmation: "server-confirmation",
+        plan: "Recovery",
+        currentPeriodEnd: "2026-11-28",
+      },
+    });
+  });
+
+  const writes = [
+    [
+      "sites",
+      "add",
+      "example.com",
+      "--type",
+      "shopify",
+      "--timezone",
+      "Europe/London",
+    ],
+    ["billing", "cancel", "--site", "clinic.com"],
+    [
+      "integrations",
+      "connect",
+      "--platform",
+      "meta",
+      "--pixel",
+      "1234567890",
+      "--label",
+      "Shop's US pixel",
+      "--token-stdin",
+    ],
+  ];
+  it.each(writes)(
+    "returns a reviewable JSON proposal for %s %s even with a TTY",
+    async (...argv) => {
+      h.setInteractive(true);
+      h.answers.push("yes");
+      h.setStdin("a-secret-that-must-not-be-read");
+      expect(await h.run(...argv, "--json")).toBe(2);
+      const env = h.json();
+      expect(env.error).toMatchObject({
+        code: "CONFIRMATION_REQUIRED",
+        message: "This change needs approval. Nothing was changed.",
+        next: "Show the changes to the person, then run the confirmCommand.",
+      });
+      expect(env.data.changes).toHaveLength(1);
+      expect(env.data.changes[0]).toContain(
+        argv[0] === "sites" ? "example.com" : "clinic.com",
+      );
+      if (argv[0] === "sites") {
+        expect(env.data.changes[0]).toContain("org_0000000001");
+        expect(env.data.changes[0]).toContain(
+          "shopify, USD, Europe/London, restricted category on",
+        );
+        expect(env.data.changes[0]).toContain("No charge");
+      }
+      if (argv[0] === "billing")
+        expect(env.data.changes[0]).toContain("2026-11-28, then stops");
+      if (argv[0] === "integrations")
+        expect(env.data.changes[0]).toContain("every site using it");
+      expect(env.data.confirmCommand).toMatch(/^crisper .* --json --yes$/);
+      expect(h.asked()).toBe(0);
+      expect(h.secretAsked()).toBe(0);
+      expect(h.stdinReads()).toBe(0);
+      expect(
+        h.calls.some(
+          (c) =>
+            c.name === "create_site" ||
+            c.name === "connect_integration" ||
+            c.args.confirmation,
+        ),
+      ).toBe(false);
+      expect(JSON.stringify(env)).not.toContain("server-confirmation");
+      expect(JSON.stringify(env)).not.toContain(
+        "a-secret-that-must-not-be-read",
+      );
+    },
+  );
+
+  it.each(writes)(
+    "does not prompt without a terminal for %s %s",
+    async (...argv) => {
+      h.setInteractive(false);
+      expect(await h.run(...argv)).toBe(2);
+      expect(h.err.join("\n")).toContain(
+        "This change needs approval. Nothing was changed.",
+      );
+      expect(h.err.join("\n")).toContain("After approval: crisper ");
+      expect(h.asked()).toBe(0);
+      expect(h.secretAsked()).toBe(0);
+      expect(h.stdinReads()).toBe(0);
+    },
+  );
+
+  it("replays the exact quoted invocation and accepts approval", async () => {
+    const { execFileSync } = await import("node:child_process");
+    const label = "Shop's US pixel $(printf expanded)";
+    const argv = [
+      "--json",
+      "integrations",
+      "connect",
+      "--platform",
+      "meta",
+      "--pixel",
+      "1234567890",
+      "--label",
+      label,
+      "--token-stdin",
+    ];
+    expect(await h.run(...argv)).toBe(2);
+    const replay = h.json().data.confirmCommand as string;
+    const parsed = execFileSync("sh", ["-c", `printf '%s\\0' ${replay}`])
+      .toString()
+      .split("\0")
+      .slice(0, -1);
+    expect(parsed).toEqual(["crisper", ...argv, "--yes"]);
+    h.setStdin("dummy-platform-token-for-test");
+    h.tools.connect_integration = () => ({ result: { status: "connected" } });
+    expect(await h.run(...parsed.slice(1))).toBe(0);
+    expect(
+      h.calls.find((c) => c.name === "connect_integration")?.args.label,
+    ).toBe(label);
+    expect(h.asked()).toBe(0);
+    expect(h.stdinReads()).toBe(1);
+  });
+
+  it("accepts a typed yes for a human adding a site", async () => {
+    h.tools.create_site = () => ({ result: { websiteId: "new-site" } });
+    h.answers.push("yes");
+    expect(
+      await h.run("sites", "add", "example.com", "--type", "shopify"),
+    ).toBe(0);
+    expect(h.asked()).toBe(1);
+    expect(h.calls.some((c) => c.name === "create_site")).toBe(true);
+  });
+
+  it("replays an approved JSON billing cancellation through both server steps", async () => {
+    expect(await h.run("billing", "cancel", "--json")).toBe(2);
+    const command = h.json().data.confirmCommand as string;
+    h.tools.cancel_billing = (args) => ({
+      result: args.confirmation
+        ? { status: "cancel_requested", currentPeriodEnd: "2026-11-28" }
+        : {
+            status: "confirmation_required",
+            confirmation: "fresh-confirmation",
+          },
+    });
+    expect(await h.run(...command.split(" ").slice(1))).toBe(0);
+    expect(
+      h.calls
+        .filter((c) => c.name === "cancel_billing")
+        .map((c) => c.args.confirmation),
+    ).toEqual([undefined, "fresh-confirmation"]);
+    expect(h.asked()).toBe(0);
+  });
+
+  it("puts --yes before the end-of-options marker on replay", async () => {
+    expect(
+      await h.run(
+        "--json",
+        "sites",
+        "add",
+        "--type",
+        "shopify",
+        "--",
+        "example.com",
+      ),
+    ).toBe(2);
+    expect(h.json().data.confirmCommand).toBe(
+      "crisper --json sites add --type shopify --yes -- example.com",
+    );
+  });
+
+  const invalidOrgs = [
+    "",
+    "org_short",
+    "org_" + "a".repeat(65),
+    "org_012345678-",
+    "org_0123456789\n",
+    "org_0123456789_",
+    "org_012345678é",
+  ];
+  it.each(invalidOrgs)(
+    "rejects invalid org %j before any request, including refresh",
+    async (value) => {
+      h.advance(4_000_000);
+      for (const argv of [
+        ["sites", "list", `--org=${value}`],
+        ["orgs", "use", value],
+      ]) {
+        expect(await h.run(...argv, "--json")).toBe(2);
+        expect(h.json().error.code).toBe("INVALID_ARGUMENT");
+        expect(h.json().error.next).toContain("crisper orgs list");
+        expect(h.requests).toEqual([]);
+      }
+    },
+  );
+
+  const invalidSites = [
+    "",
+    "a b",
+    "a\tb",
+    "a\nb",
+    "a\u001bb",
+    "a\u0085b",
+    "a".repeat(254),
+  ];
+  it.each(invalidSites)(
+    "rejects invalid site %j before any request",
+    async (value) => {
+      h.advance(4_000_000);
+      for (const argv of [
+        ["dns", "records", `--site=${value}`],
+        ["sites", "use", value],
+      ]) {
+        expect(await h.run(...argv, "--json")).toBe(2);
+        expect(h.json().error.code).toBe("INVALID_ARGUMENT");
+        expect(h.requests).toEqual([]);
+      }
+    },
+  );
+
+  it.each([
+    "localhost",
+    "a..com",
+    "-a.com",
+    "a-.com",
+    "a.c_m",
+    "a.com:443",
+    ".com",
+    "a.com.",
+    "a b.com",
+    "a\u001b.com",
+    "a".repeat(64) + ".com",
+    "a.".repeat(126) + "aa",
+  ])("rejects invalid added domain %j before any request", async (domain) => {
+    h.advance(4_000_000);
+    expect(
+      await h.run(
+        "sites",
+        "add",
+        domain,
+        "--type",
+        "shopify",
+        "--yes",
+        "--json",
+      ),
+    ).toBe(2);
+    expect(h.json().error.code).toBe("INVALID_ARGUMENT");
+    expect(h.requests).toEqual([]);
+  });
+
+  it.each(["org_0123456789", "org_" + "A1".repeat(32)])(
+    "accepts valid organization boundaries %s",
+    async (org) => {
+      expect(await h.run("sites", "list", "--org", org, "--json")).toBe(0);
+      expect(h.calls[0]?.args).toEqual({ orgId: org });
+    },
+  );
+
+  it("sends MCP POSTs but no standalone GET during a tool call", async () => {
+    expect(await h.run("orgs", "list", "--json")).toBe(0);
+    expect(h.calls.map((c) => c.name)).toEqual(["get_connection"]);
+    expect(h.requests.length).toBeGreaterThanOrEqual(3);
+    expect(
+      h.requests.every(
+        (r) => r.url === `${ORIGIN}/api/mcp` && r.method === "POST",
+      ),
+    ).toBe(true);
   });
 });

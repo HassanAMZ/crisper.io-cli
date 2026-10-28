@@ -117,6 +117,9 @@ export type Profile = {
   defaultOrgId: string | null;
   /** Site chosen with `crisper sites use`; cleared when the organization changes. */
   defaultSiteId?: string | null;
+  /** Names for the interactive prompt only; never used to pick a target. */
+  defaultOrgName?: string | null;
+  defaultSiteDomain?: string | null;
   signedInAt: string;
 };
 

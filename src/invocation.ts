@@ -20,8 +20,19 @@ export function viaRunner(
 /** Rewrites `crisper <command>` in output to how this run was started. */
 export function commandsFor(runner: boolean): (text: string) => string {
   if (!runner) return (text) => text;
-  return (text) =>
-    text.replace(/(^|[\s`"'(])crisper(?= [a-z])/g, "$1npx crisperio");
+  return (text) => {
+    // An approval envelope must preserve the exact argv, including labels that
+    // happen to contain "crisper". Agents can replace the executable prefix.
+    if (text.startsWith("{")) {
+      try {
+        if (typeof JSON.parse(text)?.data?.confirmCommand === "string")
+          return text;
+      } catch {
+        // Human text can start with a brace too.
+      }
+    }
+    return text.replace(/(^|[\s`"'(])crisper(?= [a-z])/g, "$1npx crisperio");
+  };
 }
 
 /** The terminal writer, with suggested commands matching how this run was started. */

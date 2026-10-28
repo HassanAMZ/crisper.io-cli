@@ -21,7 +21,12 @@ export type Envelope = {
   >;
 };
 
-export type OutputMode = { json: boolean; color: boolean };
+export type OutputMode = {
+  json: boolean;
+  color: boolean;
+  /** `--timing`: print how long each request took, on stderr. */
+  timing?: boolean;
+};
 
 export function envelope(
   command: string,
@@ -138,4 +143,9 @@ export function emit(
   }
   const e = env.error!;
   writer.err(`${safeText(e.message)}${e.next ? `\n${safeText(e.next)}` : ""}`);
+  if (e.code === "CONFIRMATION_REQUIRED") {
+    const proposal = env.data as { confirmCommand?: unknown } | null;
+    if (typeof proposal?.confirmCommand === "string")
+      writer.err(`After approval: ${safeText(proposal.confirmCommand)}`);
+  }
 }

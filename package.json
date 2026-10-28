@@ -1,6 +1,6 @@
 {
   "name": "crisperio",
-  "version": "0.0.4",
+  "version": "0.0.6",
   "description": "Crisper from the terminal: sign in once, then set up and check conversion tracking for your sites. https://crisper.io",
   "license": "UNLICENSED",
   "type": "module",
