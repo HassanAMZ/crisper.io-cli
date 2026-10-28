@@ -21,7 +21,12 @@ export type Envelope = {
   >;
 };
 
-export type OutputMode = { json: boolean; color: boolean };
+export type OutputMode = {
+  json: boolean;
+  color: boolean;
+  /** `--timing`: print how long each request took, on stderr. */
+  timing?: boolean;
+};
 
 export function envelope(
   command: string,

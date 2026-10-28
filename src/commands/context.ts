@@ -3,7 +3,13 @@ import { type Session, loadSession } from "../auth/session.js";
 import { ConfigStore, KeyringStore, type SecretStore } from "../auth/store.js";
 import { type CliConfig, resolveConfig } from "../config.js";
 import { runnerAware } from "../invocation.js";
-import { quiet, retryingFetch, setProgress, spinner } from "../net.js";
+import {
+  quiet,
+  retryingFetch,
+  setProgress,
+  spinner,
+  timedFetch,
+} from "../net.js";
 import { type OutputMode, type Writer, stdio } from "../output.js";
 import { type Prompter, terminal } from "../prompt.js";
 
@@ -37,7 +43,8 @@ export function defaultContext(
     writer: runnerAware(stdio),
     secrets: new KeyringStore(),
     configs: new ConfigStore(),
-    fetcher: retryingFetch(fetch),
+    // Timed inside the retries, so every attempt gets its own line.
+    fetcher: retryingFetch(mode.timing ? timedFetch(fetch) : fetch),
     interactive: Boolean(process.stdout.isTTY && process.stdin.isTTY),
     openBrowser: async (url) => {
       const { default: open } = await import("open");

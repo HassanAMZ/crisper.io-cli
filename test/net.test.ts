@@ -6,6 +6,7 @@ import {
   isConnectFailure,
   retryingFetch,
   spinner,
+  timedFetch,
 } from "../src/net.js";
 
 function connectError(code: string) {
@@ -126,5 +127,42 @@ describe("suggested commands", () => {
       "Signed in to Crisper (crisper.io).",
     );
     expect(commandsFor(false)("crisper orgs list")).toBe("crisper orgs list");
+  });
+});
+
+describe("timedFetch", () => {
+  it("prints the method, host, path, MCP tool and milliseconds, never the query or token", async () => {
+    const lines: string[] = [];
+    let t = 0;
+    const fetcher = (async () => {
+      t += 412;
+      return new Response("", { status: 200 });
+    }) as typeof fetch;
+    const timed = timedFetch(fetcher, { write: (s) => lines.push(s) }, () => t);
+    await timed("https://crisper.io/api/mcp?code=SECRET", {
+      method: "POST",
+      headers: { authorization: "Bearer TOKEN" },
+      body: JSON.stringify({
+        method: "tools/call",
+        params: { name: "get_connection", arguments: { x: "SECRET" } },
+      }),
+    });
+    expect(lines).toEqual([
+      "[timing] POST crisper.io/api/mcp tools/call get_connection → 200 in 412 ms\n",
+    ]);
+  });
+
+  it("times a failed connection and names the reason", async () => {
+    const lines: string[] = [];
+    let t = 0;
+    const fetcher = (async () => {
+      t += 10_003;
+      throw connectError("UND_ERR_CONNECT_TIMEOUT");
+    }) as typeof fetch;
+    const timed = timedFetch(fetcher, { write: (s) => lines.push(s) }, () => t);
+    await expect(timed("https://crisper.io/x")).rejects.toThrow();
+    expect(lines[0]).toBe(
+      "[timing] GET crisper.io/x → failed after 10003 ms (UND_ERR_CONNECT_TIMEOUT)\n",
+    );
   });
 });

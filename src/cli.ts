@@ -87,6 +87,10 @@ export function createProgram(deps: ProgramDeps = {}): {
       false,
     )
     .option("--no-color", "plain output (also honours NO_COLOR)")
+    .option(
+      "--timing",
+      "show how long each request takes, in milliseconds (also CRISPER_TIMING=1)",
+    )
     .exitOverride()
     .configureOutput({
       writeOut: (s) => writer.out(s.replace(/\n$/, "")),
@@ -96,11 +100,19 @@ export function createProgram(deps: ProgramDeps = {}): {
   let exitCode: number = EXIT.ok;
 
   const modeOf = (argv: string[]): OutputMode => {
-    const opts = program.opts<{ json?: boolean; color?: boolean }>();
+    const opts = program.opts<{
+      json?: boolean;
+      color?: boolean;
+      timing?: boolean;
+    }>();
     return {
       json: Boolean(opts.json) || argv.includes("--json"),
       color:
         opts.color !== false && !env.NO_COLOR && !argv.includes("--no-color"),
+      timing:
+        Boolean(opts.timing) ||
+        argv.includes("--timing") ||
+        env.CRISPER_TIMING === "1",
     };
   };
 
@@ -113,6 +125,7 @@ export function createProgram(deps: ProgramDeps = {}): {
     const mode = modeOf(argv);
     let out: Writer = writer;
     let ctx: CommandContext | null = null;
+    const started = performance.now();
     // Origin plus whatever org and site the command resolved before it ended.
     const contextOf = (): Context => ({
       origin: ctx?.config.origin ?? "",
@@ -148,6 +161,10 @@ export function createProgram(deps: ProgramDeps = {}): {
       );
       exitCode = err.exit;
     }
+    if (mode.timing)
+      out.err(
+        `[timing] ${name}: ${Math.round(performance.now() - started)} ms in total`,
+      );
   };
 
   let argvForRun: string[] = [];

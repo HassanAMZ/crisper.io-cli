@@ -104,3 +104,52 @@ export function spinner(
     }
   };
 }
+
+/** What a request was for, without anything secret: the MCP method and tool name only. */
+function purpose(init?: RequestInit): string {
+  if (typeof init?.body !== "string") return "";
+  try {
+    const rpc = JSON.parse(init.body) as {
+      method?: unknown;
+      params?: { name?: unknown };
+    };
+    const name = typeof rpc.params?.name === "string" ? rpc.params.name : "";
+    return typeof rpc.method === "string"
+      ? ` ${rpc.method}${name ? ` ${name}` : ""}`.replace(/[^\w ./-]/g, "")
+      : "";
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * `--timing`: one stderr line per request with its time in milliseconds,
+ * until the answer started arriving (or the failure). Only the host and path
+ * are shown; query strings and bodies may hold codes or tokens.
+ */
+export function timedFetch(
+  fetcher: typeof fetch,
+  stream: Stream & { isTTY?: boolean } = process.stderr,
+  clock: () => number = () => performance.now(),
+): typeof fetch {
+  const line = (text: string) =>
+    stream.write(`${stream.isTTY ? "\r\u001b[2K" : ""}[timing] ${text}\n`);
+  return async (input, init) => {
+    const url = new URL(input instanceof Request ? input.url : String(input));
+    const what = `${init?.method ?? "GET"} ${url.host}${url.pathname}${purpose(init)}`;
+    const started = clock();
+    const ms = () => Math.round(clock() - started);
+    try {
+      const res = await fetcher(input, init);
+      line(`${what} → ${res.status} in ${ms()} ms`);
+      return res;
+    } catch (error) {
+      const code = (error as { cause?: { code?: unknown } } | null)?.cause
+        ?.code;
+      line(
+        `${what} → failed after ${ms()} ms${typeof code === "string" ? ` (${code})` : ""}`,
+      );
+      throw error;
+    }
+  };
+}
