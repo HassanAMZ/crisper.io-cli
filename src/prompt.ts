@@ -1,6 +1,7 @@
 import { createInterface } from "node:readline";
 
 import { CliError, EXIT } from "./errors.js";
+import { viaRunner } from "./invocation.js";
 import { shellArg } from "./output.js";
 import { type Choice, pick } from "./picker.js";
 
@@ -133,7 +134,8 @@ export async function confirm(
     );
     error.data = {
       changes: protocol.changes,
-      confirmCommand: `crisper ${argv.map(shellArg).join(" ")}`,
+      // Started with npx there is no `crisper` command to replay with.
+      confirmCommand: `${viaRunner() ? "npx crisperio" : "crisper"} ${argv.map(shellArg).join(" ")}`,
     };
     throw error;
   }

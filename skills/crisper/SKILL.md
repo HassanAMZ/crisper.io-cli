@@ -57,7 +57,8 @@ without another change.
 Never ask the human to paste platform tokens into chat. For integration tokens,
 have the human pipe the token using `--token-stdin`, or use the hidden terminal
 prompt. Request approval before token entry. Tokens are never command arguments.
-If using npx, replace the leading `crisper` in replay commands with `npx crisperio`.
+Run `confirmCommand` exactly as given; it already starts with `npx crisperio`
+when the CLI was started that way.
 Exit 8 means a change may have happened: inspect status before retrying.
 
 ## Exit codes
