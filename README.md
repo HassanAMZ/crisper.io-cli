@@ -4,6 +4,18 @@ Crisper from the terminal: sign in once, then set up and check conversion tracki
 
 **Status: preview.** Commands and their `--json` output may still change before version 1.0. The same jobs work in Claude Code, Codex and Cursor through the Crisper MCP: <https://crisper.io/mcp>.
 
+Install it once to get the `crisper` command:
+
+```sh
+npm install -g crisperio
+crisper login
+crisper orgs list
+crisper orgs use <orgId>
+crisper sites list
+```
+
+Or run it without installing; then start every command with `npx crisperio` instead of `crisper` (the CLI's own suggestions follow whichever you used):
+
 ```sh
 npx crisperio login
 npx crisperio orgs list
@@ -38,5 +50,6 @@ Add `--json` before the command for a single machine-readable envelope: `schemaV
 - Tokens are kept in your operating system's credential store (macOS Keychain, Windows Credential Manager, Linux Secret Service). There is no plain-text fallback. On macOS, the first read from a different `node` binary (for example `npx` after a Node upgrade) can prompt for Keychain access; that's the Keychain, not a bug.
 - `crisper logout` revokes the sign-in on the server, then clears it locally.
 - Output escapes control characters, so a site name can't rewrite your terminal.
+- If a connection to Crisper can't be opened, the CLI tries twice more before giving up. Nothing has been sent at that point, so a retry can't repeat a change.
 
 Config (no secrets) lives in `~/.config/crisperio/config.json`, or `CRISPER_CONFIG_DIR`. On macOS and Linux the directory and file are owner-only; on Windows they inherit your user profile's permissions, so keep `CRISPER_CONFIG_DIR` inside your own profile.
