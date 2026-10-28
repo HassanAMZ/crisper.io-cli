@@ -27,6 +27,8 @@ type State = {
   mcp: (token: string, name: string) => { status: number; body?: unknown };
   calls: { url: string; body: string; auth: string | null }[];
   orgs: { orgId: string; name: string; role: string; siteCount: number }[];
+  /** What list_sites answers, for every organization. */
+  sites: { websiteId: string; domain: string; siteType: string }[];
 };
 
 function makeFetch(state: State): typeof fetch {
@@ -159,7 +161,17 @@ function harness() {
         siteCount: 1,
       },
     ],
-    mcp: () => ({ status: 200, body: okConnection(state) }),
+    sites: [],
+    mcp: (_token, name) => ({
+      status: 200,
+      body:
+        name === "list_sites"
+          ? {
+              content: [{ type: "text", text: "{}" }],
+              structuredContent: { sites: state.sites, truncated: false },
+            }
+          : okConnection(state),
+    }),
   };
   const out: string[] = [];
   const err: string[] = [];
@@ -374,21 +386,40 @@ describe("crisper (command contract)", () => {
       { orgId: "org_1", name: "A", role: "org:admin", siteCount: 1 },
       { orgId: "org_2", name: "B", role: "org:admin", siteCount: 3 },
     ];
+    h.state.sites = [
+      { websiteId: "w_1", domain: "one.example", siteType: "shopify" },
+      { websiteId: "w_2", domain: "two.example", siteType: "wordpress" },
+    ];
     h.setInteractive(true);
-    h.picks.push("org_2");
+    // The organization, then its website.
+    h.picks.push("org_2", "w_2");
     expect(await h.run("login", "--no-browser")).toBe(0);
-    expect(h.asked).toEqual([["org_1", "org_2"]]);
-    expect(h.out.join("\n")).toContain("Using B (org_2) for later commands.");
+    expect(h.asked).toEqual([
+      ["org_1", "org_2"],
+      ["w_1", "w_2"],
+    ]);
+    expect(h.out.join("\n")).toContain(
+      "Using B (org_2) and two.example for later commands.",
+    );
     expect(await h.run("--json", "auth", "status")).toBe(0);
     expect(JSON.parse(h.out[0]!).data.defaultOrgId).toBe("org_2");
+    expect(await h.defaultSite()).toBe("w_2");
     // orgs use with no ID asks; Esc changes nothing and exits 130.
     expect(await h.run("orgs", "use")).toBe(130);
-    h.picks.push("org_1");
+    // Another org, website skipped: the old org's website is forgotten.
+    h.picks.push("org_1", null);
     expect(await h.run("orgs", "use")).toBe(0);
-    expect(h.out.join("\n")).toContain("Using A (org_1)");
+    expect(h.out.join("\n")).toContain("Using A (org_1) for later commands.");
+    expect(await h.defaultSite()).toBeNull();
+    // sites use with no website asks too.
+    h.picks.push("w_1");
+    expect(await h.run("sites", "use")).toBe(0);
+    expect(h.out.join("\n")).toContain("Using one.example");
+    expect(await h.defaultSite()).toBe("w_1");
     // Without a terminal (or with --json), the ID is required.
     expect(await h.run("--json", "orgs", "use")).toBe(2);
-    expect(h.asked).toHaveLength(3);
+    expect(await h.run("--json", "sites", "use")).toBe(2);
+    expect(h.asked).toHaveLength(6);
   }, 15_000);
 
   it("keeps the chosen org only when the same person signs in again", async () => {

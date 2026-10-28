@@ -5,8 +5,10 @@ import { safeText, shellArg, table } from "../output.js";
 import { confirm } from "../prompt.js";
 import { type CommandContext } from "./context.js";
 import { humanStatus } from "./setup.js";
+import { canChoose } from "./orgs.js";
 import {
   type TargetFlags,
+  chooseSite,
   listSites,
   normalizeDomain,
   resolveOrg,
@@ -45,6 +47,9 @@ export async function sitesList(
   const orgId = await resolveOrg(ctx, session, flags.org);
   const result = await listSites(ctx, session, orgId);
   const current = session.profile.defaultSiteId ?? null;
+  const domain = result.sites.find((s) => s.websiteId === current)?.domain;
+  if (domain && domain !== session.profile.defaultSiteDomain)
+    await session.updateProfile({ defaultSiteDomain: domain }).catch(() => {});
   return {
     data: { ...result, defaultSiteId: current },
     context: { orgId },
@@ -72,15 +77,58 @@ export async function sitesList(
   };
 }
 
+/** `sites use` without a website only works where the list can be shown. */
+export function requireSiteUnlessChoosing(
+  ctx: CommandContext,
+  site: string | undefined,
+) {
+  if (!site && !canChoose(ctx))
+    throw new CliError("INVALID_ARGUMENT", "Name the website to use.", {
+      exit: EXIT.usage,
+      next: "Run `crisper sites use <domain>`; `crisper sites list` shows them.",
+    });
+}
+
 export async function sitesUse(
   ctx: CommandContext,
   session: Session,
-  flags: TargetFlags & { site: string },
+  flags: TargetFlags & { site?: string },
 ) {
-  const { orgId, site } = await resolveSite(ctx, session, flags);
+  requireSiteUnlessChoosing(ctx, flags.site);
+  let picked = flags.site;
+  if (!picked) {
+    const orgId = await resolveOrg(ctx, session, flags.org);
+    const { sites } = await listSites(ctx, session, orgId);
+    if (sites.length === 0)
+      throw new CliError(
+        "CUSTOMER_ACTION_REQUIRED",
+        "This organization has no websites yet.",
+        {
+          exit: EXIT.customerAction,
+          next: "Add one: crisper sites add <domain> --type <platform>",
+        },
+      );
+    const chosen = await chooseSite(
+      ctx,
+      sites,
+      session.profile.defaultSiteId ?? null,
+    );
+    if (!chosen)
+      throw new CliError("INTERRUPTED", "Nothing was changed.", {
+        exit: EXIT.interrupted,
+      });
+    picked = chosen;
+  }
+  const { orgId, site } = await resolveSite(ctx, session, {
+    ...flags,
+    site: picked,
+  });
   await session.updateProfile({
     defaultOrgId: orgId,
+    // --org may name another organization; its name isn't known here.
+    ...(orgId !== session.profile.defaultOrgId ? { defaultOrgName: null } : {}),
     defaultSiteId: site.websiteId,
+    defaultSiteDomain: site.domain,
   });
   return {
     data: {
@@ -317,7 +365,11 @@ export async function sitesAdd(
   let remembered = !flags.org;
   if (remembered)
     await session
-      .updateProfile({ defaultOrgId: orgId, defaultSiteId: websiteId })
+      .updateProfile({
+        defaultOrgId: orgId,
+        defaultSiteId: websiteId,
+        defaultSiteDomain: domain,
+      })
       .catch(() => {
         remembered = false;
       });

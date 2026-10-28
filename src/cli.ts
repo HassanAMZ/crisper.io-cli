@@ -30,6 +30,7 @@ import {
   sitesList,
   sitesStatus,
   sitesUse,
+  requireSiteUnlessChoosing,
 } from "./commands/sites.js";
 import { CliError, EXIT, sanitize } from "./errors.js";
 import { runnerAware } from "./invocation.js";
@@ -243,12 +244,19 @@ export function createProgram(deps: ProgramDeps = {}): {
     );
   withSite(
     sites
-      .command("use <site>")
-      .description("choose the website later commands use"),
-  ).action((site: string, flags: Target) =>
-    run("sites use", argvForRun, (ctx) =>
-      signedIn(sitesUse)(ctx, { ...flags, site }),
-    ),
+      .command("use [site]")
+      .description(
+        "choose the website later commands use (none given: pick from a list)",
+      ),
+  ).action((site: string | undefined, flags: Target) =>
+    run("sites use", argvForRun, (ctx) => {
+      const chosen = site ?? flags.site;
+      requireSiteUnlessChoosing(ctx, chosen);
+      return signedIn(sitesUse)(
+        ctx,
+        chosen ? { ...flags, site: chosen } : flags,
+      );
+    }),
   );
   withSite(
     sites.command("status").description("setup progress and the next step"),

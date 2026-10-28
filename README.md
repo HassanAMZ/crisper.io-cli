@@ -14,6 +14,8 @@ crisper orgs use      # pick with the arrow keys, Enter to choose
 crisper sites list
 ```
 
+Type just `crisper` to stay inside Crisper: each line is one command, without `crisper` in front (`sites list`, `sites status`, `exit`).
+
 Or run it without installing; then start every command with `npx crisperio` instead of `crisper` (the CLI's own suggestions follow whichever you used):
 
 ```sh
@@ -29,7 +31,7 @@ npx crisperio --json orgs list   # one JSON object on stdout, progress on stderr
 | `crisper login`                                                                  | Opens your browser; you approve a short code. `--no-browser` prints the link only.                                            |
 | `crisper auth status`                                                            | Who is signed in on this computer, and the saved organization and website.                                                    |
 | `crisper orgs list`, `orgs use [id]`                                             | Organizations this login can use; choose one for later commands (no ID: pick from a list).                                    |
-| `crisper sites list`, `sites use <domain>`                                       | Websites in the organization; choose one for later commands.                                                                  |
+| `crisper sites list`, `sites use [domain]`                                       | Websites in the organization; choose one for later commands (none given: pick from a list).                                   |
 | `crisper sites add <domain> --type <platform>`                                   | Add a website (no charge). Defaults: USD, this computer's timezone, restricted category on.                                   |
 | `crisper sites status`                                                           | Setup progress and the one next step.                                                                                         |
 | `crisper sites health`                                                           | Purchases and leads Crisper received today and this week.                                                                     |

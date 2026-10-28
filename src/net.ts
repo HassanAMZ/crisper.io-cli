@@ -76,7 +76,7 @@ export function setProgress(p: Progress) {
 export const waiting: Progress = (work, label) => current(work, label);
 
 /**
- * Shows "Waiting for Crisper…" on stderr while `work` runs, so a slow network
+ * Shows "Waiting for Crisper… 1234 ms" on stderr while `work` runs, so a slow network
  * doesn't look like a frozen terminal. Only for a person at a terminal: the
  * caller passes `quiet` with --json or when stderr isn't a terminal.
  */
@@ -87,8 +87,12 @@ export function spinner(
   return async (work, label = defaultLabel) => {
     let frame = 0;
     let ticker: NodeJS.Timeout | undefined;
+    const started = Date.now();
+    // The running time, so a slow network is visible as a number, not a hunch.
     const draw = () =>
-      stream.write(`\r${FRAMES[frame++ % FRAMES.length]} ${label}`);
+      stream.write(
+        `\r${FRAMES[frame++ % FRAMES.length]} ${label} ${Date.now() - started} ms\u001b[K`,
+      );
     const delay = setTimeout(() => {
       draw();
       ticker = setInterval(draw, 80);

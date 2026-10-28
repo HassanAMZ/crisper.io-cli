@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { commandsFor, viaRunner } from "../src/invocation.js";
+import { commandOf, words } from "../src/shell.js";
 import {
   SPINNER_DELAY_MS,
   isConnectFailure,
@@ -164,5 +165,25 @@ describe("timedFetch", () => {
     expect(lines[0]).toBe(
       "[timing] GET crisper.io/x → failed after 10003 ms (UND_ERR_CONNECT_TIMEOUT)\n",
     );
+  });
+});
+
+describe("interactive mode", () => {
+  it("splits a typed line like a shell, quotes included", () => {
+    expect(words(`sites add "my shop.com" --type  shopify`)).toEqual([
+      "sites",
+      "add",
+      "my shop.com",
+      "--type",
+      "shopify",
+    ]);
+    expect(words(`  `)).toEqual([]);
+    expect(words(`--org ''`)).toEqual(["--org", ""]);
+  });
+
+  it("accepts commands with or without the crisper in front", () => {
+    expect(commandOf("sites list")).toEqual(["sites", "list"]);
+    expect(commandOf("crisper sites list")).toEqual(["sites", "list"]);
+    expect(commandOf("npx crisperio sites list")).toEqual(["sites", "list"]);
   });
 });

@@ -21,6 +21,7 @@ import {
   fetchOrganizations,
   orgsTable,
 } from "./orgs.js";
+import { siteAfterChoosingOrg } from "./target.js";
 
 const depsOf = (ctx: CommandContext): SessionDeps => ({
   config: ctx.config,
@@ -175,13 +176,20 @@ export async function login(
   let keep = organizations.length === 1 ? organizations[0]!.orgId : previousOrg;
   if (!keep && organizations.length > 1 && canChoose(ctx))
     keep = await chooseOrganization(ctx, organizations);
+  const keptPrevious = samePerson && keep === previous?.defaultOrgId;
+  let siteId = keptPrevious ? (previous?.defaultSiteId ?? null) : null;
+  let domain = keptPrevious ? (previous?.defaultSiteDomain ?? null) : null;
+  if (keep && !siteId) {
+    const site = await siteAfterChoosingOrg(ctx, session, keep);
+    siteId = site?.websiteId ?? null;
+    domain = site?.domain ?? null;
+  }
   await session.updateProfile({
     subject: userId,
     defaultOrgId: keep,
-    defaultSiteId:
-      samePerson && keep === previous?.defaultOrgId
-        ? (previous?.defaultSiteId ?? null)
-        : null,
+    defaultOrgName: organizations.find((o) => o.orgId === keep)?.name ?? null,
+    defaultSiteId: siteId,
+    defaultSiteDomain: siteId ? domain : null,
   });
 
   return {
@@ -190,6 +198,7 @@ export async function login(
       origin: ctx.config.origin,
       organizations,
       defaultOrgId: keep,
+      defaultSiteId: siteId,
     },
     human: (env: Envelope) => {
       const d = env.data as {
@@ -198,11 +207,11 @@ export async function login(
       };
       const signedIn = `Signed in to Crisper (${new URL(ctx.config.origin).host}).`;
       const using = d.organizations.find((o) => o.orgId === d.defaultOrgId);
-      if (using && d.organizations.length > 1)
+      if (using && (d.organizations.length > 1 || domain))
         return [
           signedIn,
-          `Using ${safeText(using.name)} (${safeText(using.orgId)}) for later commands.`,
-          "Switch any time: crisper orgs use",
+          `Using ${safeText(using.name)} (${safeText(using.orgId)})${siteId && domain ? ` and ${safeText(domain)}` : ""} for later commands.`,
+          "Switch any time: crisper orgs use, crisper sites use",
         ].join("\n");
       const lines = [signedIn, "", orgsTable(d.organizations, d.defaultOrgId)];
       if (d.organizations.length > 1 && !d.defaultOrgId)
@@ -232,10 +241,12 @@ export async function status(ctx: CommandContext) {
       [
         `Signed in to Crisper (${new URL(p.origin).host}) since ${p.signedInAt}.`,
         data.defaultOrgId
-          ? `Default organization: ${safeText(data.defaultOrgId)}`
+          ? `Default organization: ${p.defaultOrgName ? `${safeText(p.defaultOrgName)} (${safeText(data.defaultOrgId)})` : safeText(data.defaultOrgId)}`
           : "No default organization. Run `crisper orgs use` to choose one.",
         ...(data.defaultSiteId
-          ? [`Default website: ${safeText(data.defaultSiteId)}`]
+          ? [
+              `Default website: ${safeText(p.defaultSiteDomain ?? data.defaultSiteId)}`,
+            ]
           : []),
       ].join("\n"),
   };

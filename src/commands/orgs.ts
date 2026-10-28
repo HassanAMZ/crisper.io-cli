@@ -3,6 +3,7 @@ import { CliError, EXIT } from "../errors.js";
 import { callTool } from "../mcp/client.js";
 import { type Envelope, safeText, table } from "../output.js";
 import { type CommandContext } from "./context.js";
+import { siteAfterChoosingOrg } from "./target.js";
 
 export type Organization = {
   orgId: string;
@@ -81,6 +82,7 @@ export function orgsTable(
 
 export async function orgsList(ctx: CommandContext, session: Session) {
   const { organizations } = await fetchOrganizations(ctx, session);
+  await rememberNames(session, organizations);
   return {
     data: { organizations, defaultOrgId: session.profile.defaultOrgId },
     human: (env: Envelope) => {
@@ -94,6 +96,18 @@ export async function orgsList(ctx: CommandContext, session: Session) {
       return lines.join("\n");
     },
   };
+}
+
+/** Keep the saved organization's name current, for the interactive prompt. */
+export async function rememberNames(
+  session: Session,
+  organizations: Organization[],
+) {
+  const name = organizations.find(
+    (o) => o.orgId === session.profile.defaultOrgId,
+  )?.name;
+  if (name && name !== session.profile.defaultOrgName)
+    await session.updateProfile({ defaultOrgName: name }).catch(() => {});
 }
 
 /** A person at a terminal who can answer an arrow-key list. */
@@ -170,16 +184,35 @@ export async function orgsUse(
         next: "Run `crisper orgs list` to see your organizations.",
       },
     );
+  const sameOrg = match.orgId === session.profile.defaultOrgId;
+  // At a terminal, the website comes next: that's where the work is.
+  const site = await siteAfterChoosingOrg(
+    ctx,
+    session,
+    match.orgId,
+    sameOrg ? (session.profile.defaultSiteId ?? null) : null,
+  );
   await session.updateProfile({
     defaultOrgId: match.orgId,
+    defaultOrgName: match.name,
     // A site belongs to one organization; a new choice of org drops the old site.
-    ...(match.orgId !== session.profile.defaultOrgId
-      ? { defaultSiteId: null }
-      : {}),
+    ...(site
+      ? { defaultSiteId: site.websiteId, defaultSiteDomain: site.domain }
+      : sameOrg
+        ? {}
+        : { defaultSiteId: null, defaultSiteDomain: null }),
   });
   return {
-    data: { defaultOrgId: match.orgId, name: match.name },
+    data: {
+      defaultOrgId: match.orgId,
+      name: match.name,
+      ...(site ? { defaultSiteId: site.websiteId, domain: site.domain } : {}),
+    },
+    context: {
+      orgId: match.orgId,
+      ...(site ? { siteId: site.websiteId } : {}),
+    },
     human: () =>
-      `Using ${safeText(match.name)} (${safeText(match.orgId)}) for later commands.`,
+      `Using ${safeText(match.name)} (${safeText(match.orgId)})${site ? ` and ${safeText(site.domain)}` : ""} for later commands.`,
   };
 }
