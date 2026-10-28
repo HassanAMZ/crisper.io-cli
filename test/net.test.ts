@@ -99,17 +99,17 @@ describe("spinner", () => {
 describe("suggested commands", () => {
   it("knows when npx or pnpm dlx started it", () => {
     expect(
-      viaRunner("/opt/npm-cache/_npx/1a2b/node_modules/crisperio/dist/x.js", {}),
-    ).toBe(true);
-    expect(
       viaRunner(
-        "/opt/pnpm-cache/dlx/9f/node_modules/crisperio/dist/x.js",
+        "/opt/npm-cache/_npx/1a2b/node_modules/crisperio/dist/x.js",
         {},
       ),
     ).toBe(true);
-    expect(viaRunner("/usr/local/lib/node_modules/crisperio/dist/x.js", {})).toBe(
-      false,
-    );
+    expect(
+      viaRunner("/opt/pnpm-cache/dlx/9f/node_modules/crisperio/dist/x.js", {}),
+    ).toBe(true);
+    expect(
+      viaRunner("/usr/local/lib/node_modules/crisperio/dist/x.js", {}),
+    ).toBe(false);
     expect(viaRunner("/x.js", { npm_command: "exec" })).toBe(true);
   });
 
