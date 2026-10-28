@@ -1,4 +1,5 @@
-import { mkdir, open, rm, stat } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { mkdir, open, readFile, rm, stat } from "node:fs/promises";
 import { dirname } from "node:path";
 
 /**
@@ -6,11 +7,14 @@ import { dirname } from "node:path";
  * parallel after the access token expires would otherwise both redeem the
  * same refresh token, and the loser would wipe the winner's new session.
  * The lock is a file created exclusively; one older than STALE_MS is treated
- * as left behind by a crash.
+ * as left behind by a crash. Each holder writes its own ID into the file and
+ * removes the lock only if the ID is still its own, so a holder whose lock was
+ * taken over can't release the new holder's.
  */
-// Longer than any operation held under the lock (OAuth requests time out at 15 s).
-const STALE_MS = 30_000;
-const WAIT_MS = 25_000;
+// Longer than any operation held under the lock: logout revokes two tokens,
+// each OAuth request timing out at 15 s.
+const STALE_MS = 60_000;
+const WAIT_MS = 50_000;
 
 export async function withLock<T>(
   lockPath: string,
@@ -22,10 +26,15 @@ export async function withLock<T>(
   // First run on a machine: the config directory does not exist yet.
   await mkdir(dirname(lockPath), { recursive: true, mode: 0o700 });
   const start = now();
+  const id = randomUUID();
   while (true) {
     try {
       const handle = await open(lockPath, "wx", 0o600);
-      await handle.close();
+      try {
+        await handle.writeFile(id);
+      } finally {
+        await handle.close();
+      }
       break;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
@@ -46,6 +55,7 @@ export async function withLock<T>(
   try {
     return await work();
   } finally {
-    await rm(lockPath, { force: true });
+    const holder = await readFile(lockPath, "utf8").catch(() => null);
+    if (holder === id) await rm(lockPath, { force: true });
   }
 }

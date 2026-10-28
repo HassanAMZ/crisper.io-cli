@@ -70,7 +70,8 @@ describe("approval link policy", () => {
     expect(approvalUrl("https://evil.example/device", issuer)).toBeNull();
     expect(
       approvalUrl(
-        "https://user:pw@example-app-00.accounts.dev/device", // public-check: allow
+        // Built at runtime so the source holds no URL with a password in it.
+        `https://user:${"pw"}@example-app-00.accounts.dev/device`,
         issuer,
       ),
     ).toBeNull();
@@ -174,6 +175,17 @@ describe("cross-process refresh", () => {
     expect(await withLock(lock, async () => "second", sleep, now)).toBe(
       "second",
     );
+  });
+
+  it("a holder whose lock was taken over leaves the new holder's lock alone", async () => {
+    const { readFile, writeFile } = await import("node:fs/promises");
+    const dir = await mkdtemp(join(tmpdir(), "crisperio-lock-"));
+    const lock = join(dir, "config.json.lock");
+    await withLock(lock, async () => {
+      // Another process took the lock over while this one was still working.
+      await writeFile(lock, "other-holder");
+    });
+    expect(await readFile(lock, "utf8")).toBe("other-holder");
   });
 });
 
@@ -282,6 +294,13 @@ describe("first run on a fresh machine", () => {
         openBrowser: async () => {},
         signal,
         now: Date.now,
+        prompter: {
+          ask: async () => "yes",
+          secret: async () => "",
+          stdin: async () => "",
+        },
+        sleep: async () => {},
+        resolved: {},
       }),
     });
     function root() {

@@ -6,7 +6,14 @@ import {
   resolveConfig,
 } from "../src/config.js";
 import { CliError, EXIT, sanitize } from "../src/errors.js";
-import { type Writer, emit, envelope, safeText, table } from "../src/output.js";
+import {
+  type Writer,
+  emit,
+  envelope,
+  safeText,
+  shellArg,
+  table,
+} from "../src/output.js";
 
 function capture() {
   const out: string[] = [];
@@ -106,10 +113,26 @@ describe("envelope and emit", () => {
   });
 });
 
+describe("shellArg", () => {
+  it("leaves plain values alone and quotes anything a shell would act on", () => {
+    expect(shellArg("shop.example.com")).toBe("shop.example.com");
+    expect(shellArg("org_2abc")).toBe("org_2abc");
+    expect(shellArg("x.com; rm -rf ~")).toBe("'x.com; rm -rf ~'");
+    expect(shellArg("$(curl evil)")).toBe("'$(curl evil)'");
+    expect(shellArg("it's")).toBe("'it'\\''s'");
+  });
+});
+
 describe("config", () => {
-  it("defaults to crisper.io with no client until production sign-in exists", () => {
+  it("defaults to crisper.io with its production sign-in client", () => {
     const c = resolveConfig({});
     expect(c.origin).toBe("https://crisper.io");
+    expect(c.clientId).toBe("I4beUQQdtiLgmMUb");
+    expect(requireClientId(c)).toBe("I4beUQQdtiLgmMUb");
+  });
+
+  it("has no client for an origin without one", () => {
+    const c = resolveConfig({ CRISPER_ORIGIN: "https://staging.example" });
     expect(c.clientId).toBeNull();
     expect(() => requireClientId(c)).toThrowError(
       expect.objectContaining({ code: "CAPABILITY_UNAVAILABLE", exit: 7 }),

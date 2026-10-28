@@ -29,6 +29,11 @@ export type ErrorCode =
   | "NETWORK_ERROR"
   | "SERVER_ERROR"
   | "REVOCATION_UNCONFIRMED"
+  | "CUSTOMER_ACTION_REQUIRED"
+  | "CONFLICT"
+  | "NOT_OBSERVED"
+  | "WRITE_UNCONFIRMED"
+  | "EVIDENCE_INCOMPLETE"
   | "INTERRUPTED";
 
 export class CliError extends Error {
@@ -37,6 +42,8 @@ export class CliError extends Error {
   readonly retryable: boolean;
   readonly next: string | null;
   readonly retryAfterSeconds: number | null;
+  /** What the server said, for the envelope's `data` on a failed check (dns check, events verify). */
+  data: unknown = null;
 
   constructor(
     code: ErrorCode,

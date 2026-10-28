@@ -15,13 +15,18 @@ export type Organization = {
 export async function fetchOrganizations(
   ctx: CommandContext,
   session: Session,
-): Promise<{ organizations: Organization[]; raw: unknown }> {
+): Promise<{
+  organizations: Organization[];
+  userId: string | null;
+  raw: unknown;
+}> {
   const { data } = await callTool(
     session,
     ctx.config.origin,
     "get_connection",
     {},
     ctx.fetcher,
+    { signal: ctx.signal },
   );
   if (
     !data ||
@@ -47,7 +52,13 @@ export async function fetchOrganizations(
       },
     ];
   });
-  return { organizations, raw: data };
+  const user = (data as { user?: { id?: unknown } }).user;
+  return {
+    organizations,
+    // Clerk user ID of this sign-in; absent on servers before 0.3.04.
+    userId: user && typeof user.id === "string" ? user.id : null,
+    raw: data,
+  };
 }
 
 export function orgsTable(
@@ -101,7 +112,13 @@ export async function orgsUse(
         next: "Run `crisper orgs list` to see your organizations.",
       },
     );
-  await session.updateProfile({ defaultOrgId: match.orgId });
+  await session.updateProfile({
+    defaultOrgId: match.orgId,
+    // A site belongs to one organization; a new choice of org drops the old site.
+    ...(match.orgId !== session.profile.defaultOrgId
+      ? { defaultSiteId: null }
+      : {}),
+  });
   return {
     data: { defaultOrgId: match.orgId, name: match.name },
     human: () =>

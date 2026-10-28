@@ -7,6 +7,13 @@ import { ConfigStore, MemoryStore, secretName } from "../src/auth/store.js";
 import { createProgram } from "../src/cli.js";
 import { type CommandContext } from "../src/commands/context.js";
 import { type OutputMode, type Writer } from "../src/output.js";
+import { type Prompter } from "../src/prompt.js";
+
+const fakePrompter: Prompter = {
+  ask: async () => "yes",
+  secret: async () => "",
+  stdin: async () => "",
+};
 
 /**
  * A fake Crisper + Clerk behind one fetch: resource metadata, issuer
@@ -17,6 +24,7 @@ const ORIGIN = "https://crisper.io";
 const ISSUER = "https://clerk.example";
 
 type State = {
+  userId?: string | undefined;
   tokenCounter: number;
   pendingPolls: number;
   deny: boolean;
@@ -127,10 +135,18 @@ const okConnection = (state: State) => ({
   content: [
     {
       type: "text",
-      text: JSON.stringify({ connected: true, organizations: state.orgs }),
+      text: JSON.stringify({
+        connected: true,
+        organizations: state.orgs,
+        ...(state.userId ? { user: { id: state.userId } } : {}),
+      }),
     },
   ],
-  structuredContent: { connected: true, organizations: state.orgs },
+  structuredContent: {
+    connected: true,
+    organizations: state.orgs,
+    ...(state.userId ? { user: { id: state.userId } } : {}),
+  },
 });
 
 function harness() {
@@ -172,6 +188,9 @@ function harness() {
     openBrowser: async () => {},
     signal,
     now: () => clock,
+    prompter: fakePrompter,
+    sleep: async () => {},
+    resolved: {},
   });
   const run = async (...argv: string[]) => {
     out.length = 0;
@@ -187,6 +206,16 @@ function harness() {
     run,
     advance: (ms: number) => {
       clock += ms;
+    },
+    /** Set the saved default site directly (sites use needs list_sites, which this fake doesn't serve). */
+    async setDefaultSite(siteId: string) {
+      const file = await configs.read();
+      for (const p of Object.values(file.profiles)) p.defaultSiteId = siteId;
+      await configs.write(file);
+    },
+    async defaultSite() {
+      const file = await configs.read();
+      return Object.values(file.profiles)[0]?.defaultSiteId ?? null;
     },
     async init() {
       configs = new ConfigStore(
@@ -321,6 +350,30 @@ describe("crisper (command contract)", () => {
       "access-2",
     );
   }, 15_000);
+
+  it("keeps the chosen org only when the same person signs in again", async () => {
+    h.state.orgs = [
+      { orgId: "org_1", name: "A", role: "org:admin", siteCount: 1 },
+      { orgId: "org_2", name: "B", role: "org:admin", siteCount: 1 },
+    ];
+    h.state.userId = "user_1";
+    await h.run("--json", "login", "--no-browser");
+    expect(await h.run("--json", "orgs", "use", "org_2")).toBe(0);
+    await h.setDefaultSite("w_2");
+    h.state.pendingPolls = 0;
+    await h.run("--json", "login", "--no-browser");
+    expect(JSON.parse(h.out[0]!).data.defaultOrgId).toBe("org_2");
+    expect(await h.defaultSite()).toBe("w_2");
+    h.state.userId = "user_2";
+    await h.run("--json", "login", "--no-browser");
+    expect(JSON.parse(h.out[0]!).data.defaultOrgId).toBeNull();
+    expect(await h.defaultSite()).toBeNull();
+    // A server without user IDs never carries a choice over.
+    h.state.userId = undefined;
+    await h.run("--json", "orgs", "use", "org_2");
+    await h.run("--json", "login", "--no-browser");
+    expect(JSON.parse(h.out[0]!).data.defaultOrgId).toBeNull();
+  }, 30_000);
 
   it("human mode escapes server strings and keeps stdout clean on failure", async () => {
     h.state.orgs = [

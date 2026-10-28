@@ -36,7 +36,7 @@ export function envelope(
     command,
     ok: result.ok,
     context,
-    data: result.ok ? result.data : null,
+    data: result.ok ? result.data : (result.error.data ?? null),
     error: result.ok ? null : result.error.toJSON(),
     meta: {
       observedAt: now().toISOString(),
@@ -66,6 +66,28 @@ export function safeText(value: unknown): string {
     const hex = c.charCodeAt(0).toString(16).padStart(2, "0");
     return `\\x${hex}`;
   });
+}
+
+/** A value for a command the user may copy into a shell: plain words as is, anything else single-quoted. */
+export function shellArg(value: unknown): string {
+  const text = safeText(value);
+  return /^[A-Za-z0-9._:@/+-]+$/.test(text)
+    ? text
+    : `'${text.replace(/'/g, `'\\''`)}'`;
+}
+
+/**
+ * Install scripts are printed as-is so they can be copied, keeping newlines
+ * and tabs; every other control character (ESC, OSC, BEL, C1) is removed so a
+ * script can't drive the terminal or its clipboard.
+ */
+export function safeScript(script: string): string {
+  return (
+    script
+      .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/g, "")
+      // A lone carriage return could make one line print over another.
+      .replace(/\r(?!\n)/g, "")
+  );
 }
 
 /** JSON.stringify leaves C1 controls literal; escape them so stdout stays inert. */
