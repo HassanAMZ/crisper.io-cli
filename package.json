@@ -1,0 +1,42 @@
+{
+  "name": "crisperio",
+  "version": "0.0.1",
+  "description": "Crisper from the terminal: sign in once, then set up and check conversion tracking for your sites. https://crisper.io",
+  "license": "UNLICENSED",
+  "type": "module",
+  "bin": {
+    "crisper": "dist/crisper.js"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "homepage": "https://crisper.io/mcp",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/HassanAMZ/crisper.io-cli.git"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run",
+    "prepack": "tsc -p tsconfig.build.json"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.2",
+    "@napi-rs/keyring": "^2.1.2",
+    "commander": "^14.0.3",
+    "open": "^11.0.4"
+  },
+  "devDependencies": {
+    "@types/node": "^24.19.1",
+    "typescript": "^5.9.3",
+    "vitest": "^5.0.3"
+  },
+  "bugs": {
+    "url": "https://github.com/HassanAMZ/crisper.io-cli/issues"
+  }
+}
