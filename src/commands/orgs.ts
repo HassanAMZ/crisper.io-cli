@@ -1,7 +1,8 @@
 import { type Session } from "../auth/session.js";
 import { CliError, EXIT } from "../errors.js";
 import { callTool } from "../mcp/client.js";
-import { type Envelope, safeText, table } from "../output.js";
+import { type Envelope, safeText, shellArg, table } from "../output.js";
+import { confirm } from "../prompt.js";
 import { type CommandContext } from "./context.js";
 import { siteAfterChoosingOrg } from "./target.js";
 
@@ -67,7 +68,7 @@ export function orgsTable(
   defaultOrgId: string | null,
 ) {
   if (organizations.length === 0)
-    return "No organizations yet. Create one at https://crisper.io/dashboard, then run this again.";
+    return "No organizations yet. Create one: crisper orgs create <business name>";
   return table([
     ["", "ORG ID", "NAME", "ROLE", "SITES"],
     ...organizations.map((o) => [
@@ -214,5 +215,105 @@ export async function orgsUse(
     },
     human: () =>
       `Using ${safeText(match.name)} (${safeText(match.orgId)})${site ? ` and ${safeText(site.domain)}` : ""} for later commands.`,
+  };
+}
+
+/**
+ * Create an organization (the server reuses one this login already has with
+ * the same name). A write: a typed yes at a terminal, or --yes after approval.
+ * The organization, new or reused, becomes the default for later commands;
+ * a saved website from another organization is forgotten.
+ */
+export async function orgsCreate(
+  ctx: CommandContext,
+  session: Session,
+  rawName: string,
+  flags: { yes: boolean },
+) {
+  const name = rawName.trim();
+  if (name.length < 2 || name.length > 80)
+    throw new CliError(
+      "INVALID_ARGUMENT",
+      "Use an organization name of 2 to 80 characters.",
+      { exit: EXIT.usage },
+    );
+  const saved = session.profile.defaultSiteDomain;
+  const changes = [
+    `Create the organization ${safeText(name)}, or reuse yours with that name. No charge is made.`,
+    `Later commands on this computer will use it${saved ? `; if it isn't the organization saved now, they stop using the saved website ${safeText(saved)}` : ""}.`,
+  ];
+  ctx.writer.err(changes.join("\n"));
+  await confirm(
+    ctx.prompter,
+    ctx.interactive && !ctx.mode.json,
+    flags.yes,
+    "Create this organization?",
+    { changes, argv: ctx.argv ?? [] },
+  );
+  // Whether an organization was made can only be read from the list of them.
+  const unconfirmed = () =>
+    new CliError(
+      "WRITE_UNCONFIRMED",
+      "Crisper couldn't confirm whether the organization was created.",
+      {
+        exit: EXIT.unconfirmed,
+        next: "Run `crisper orgs list` before trying again.",
+      },
+    );
+  let data: unknown;
+  try {
+    ({ data } = await callTool(
+      session,
+      ctx.config.origin,
+      "create_organization",
+      { name },
+      ctx.fetcher,
+      { write: true, signal: ctx.signal },
+    ));
+  } catch (error) {
+    if (error instanceof CliError && error.code === "WRITE_UNCONFIRMED")
+      throw unconfirmed();
+    throw error;
+  }
+  const d = (data ?? {}) as Record<string, unknown>;
+  const orgId = typeof d.orgId === "string" ? d.orgId : null;
+  if (!orgId) throw unconfirmed();
+  const orgName = typeof d.name === "string" ? d.name : name;
+  // Any saved website belongs to the previous default organization.
+  let remembered = true;
+  await session
+    .updateProfile({
+      defaultOrgId: orgId,
+      defaultOrgName: orgName,
+      ...(orgId !== session.profile.defaultOrgId
+        ? { defaultSiteId: null, defaultSiteDomain: null }
+        : {}),
+    })
+    .catch(() => {
+      remembered = false;
+    });
+  // Name the organization, so the next step works even if saving the default failed.
+  const next = `crisper sites add <domain> --type <platform> --org ${shellArg(orgId)}`;
+  return {
+    data: {
+      ...d,
+      orgId,
+      name: orgName,
+      defaultChanged: remembered,
+      next: { step: "site", command: next },
+    },
+    context: { orgId },
+    human: () =>
+      [
+        d.status === "exists"
+          ? `You already have ${safeText(orgName)} (${safeText(orgId)}).`
+          : `Created ${safeText(orgName)} (${safeText(orgId)}).`,
+        remembered
+          ? "Later commands now use it."
+          : "Couldn't save it as the default on this computer; pass --org to later commands.",
+        "",
+        "Next: add a website.",
+        `  ${next}`,
+      ].join("\n"),
   };
 }

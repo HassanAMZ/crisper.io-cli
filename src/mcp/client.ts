@@ -22,6 +22,8 @@ let lastRetryAfter: number | null = null;
 
 /** Where the server puts a tool error's stable code (lib/mcp/server.ts). */
 export const ERROR_CODE_META = "io.crisper/errorCode";
+/** Seconds to wait, on rate_limited tool errors (servers from MCP 1.4.0). */
+export const RETRY_AFTER_META = "io.crisper/retryAfterSeconds";
 
 function paused(retryAfterSeconds = 60) {
   return new CliError(
@@ -86,6 +88,7 @@ export function toolError(
   text: string,
   code: string | null,
   write: boolean,
+  retryAfterSeconds: number | null = null,
 ): CliError {
   const message = safeText(text.trim().replace(WRITE_SUFFIX, ""));
   switch (code ?? legacyCode(text.trim())) {
@@ -103,7 +106,7 @@ export function toolError(
     case "unavailable":
       return transient(5);
     case "rate_limited":
-      return rateLimited(60);
+      return rateLimited(retryAfterSeconds ?? 60);
     case "site_unavailable":
       return notVisible();
     case "org_required":
@@ -198,15 +201,63 @@ function legacyCode(text: string): string | null {
   return LEGACY[text] ?? null;
 }
 
-async function once(
+type Connection = {
+  client: Client;
+  transport: StreamableHTTPClientTransport;
+};
+
+/**
+ * One MCP session per origin and token for the life of a command, so a site
+ * command's `list_sites` and its own tool share one `initialize` (two fewer
+ * round trips). Kept in memory only; `closeConnections` ends them when the
+ * command finishes, and any transport failure drops that session.
+ */
+const connections = new Map<string, Promise<Connection>>();
+
+/** End every open MCP session (cli.ts calls this after each command). */
+export async function closeConnections() {
+  const open = [...connections.values()];
+  connections.clear();
+  await Promise.all(
+    open.map((c) =>
+      c.then(({ transport }) => transport.close()).catch(() => {}),
+    ),
+  );
+}
+
+function connectionKey(origin: string, token: string) {
+  return `${origin} ${token}`;
+}
+
+async function dropConnection(key: string) {
+  const conn = connections.get(key);
+  connections.delete(key);
+  await conn?.then(({ transport }) => transport.close()).catch(() => {});
+}
+
+function connect(
   origin: string,
   token: string,
-  name: string,
-  args: Record<string, unknown>,
   fetcher: typeof fetch,
-  write: boolean,
   signal: AbortSignal | undefined,
-): Promise<ToolResult> {
+): Promise<Connection> {
+  const key = connectionKey(origin, token);
+  const existing = connections.get(key);
+  if (existing) return existing;
+  const opening = openConnection(origin, token, fetcher, signal);
+  connections.set(key, opening);
+  opening.catch(() => {
+    if (connections.get(key) === opening) connections.delete(key);
+  });
+  return opening;
+}
+
+async function openConnection(
+  origin: string,
+  token: string,
+  fetcher: typeof fetch,
+  signal: AbortSignal | undefined,
+): Promise<Connection> {
   const client = new Client({ name: "crisperio-cli", version: VERSION });
   const endpoint = new URL(`${origin}/api/mcp`);
   const remembering: typeof fetch = async (input, init) => {
@@ -237,30 +288,61 @@ async function once(
   try {
     if (signal?.aborted) throw abortError();
     await client.connect(transport, signal ? { signal } : undefined);
-    const result = await client.callTool(
+  } catch (error) {
+    await transport.close().catch(() => {});
+    throw error;
+  }
+  return { client, transport };
+}
+
+async function once(
+  origin: string,
+  token: string,
+  name: string,
+  args: Record<string, unknown>,
+  fetcher: typeof fetch,
+  write: boolean,
+  signal: AbortSignal | undefined,
+): Promise<ToolResult> {
+  const key = connectionKey(origin, token);
+  let result: Awaited<ReturnType<Client["callTool"]>>;
+  try {
+    const { client } = await connect(origin, token, fetcher, signal);
+    if (signal?.aborted) throw abortError();
+    result = await client.callTool(
       { name, arguments: args },
       undefined,
       signal ? { signal } : undefined,
     );
-    const content = Array.isArray(result.content) ? result.content : [];
-    const text = content
-      .filter((c): c is { type: "text"; text: string } => c.type === "text")
-      .map((c) => c.text)
-      .join("\n");
-    if (result.isError) {
-      const meta = result._meta as Record<string, unknown> | undefined;
-      const code = meta?.[ERROR_CODE_META];
-      throw toolError(text, typeof code === "string" ? code : null, write);
-    }
-    if (result.structuredContent !== undefined)
-      return { data: result.structuredContent, requestId: null };
-    try {
-      return { data: JSON.parse(text), requestId: null };
-    } catch {
-      return { data: { text }, requestId: null };
-    }
-  } finally {
-    await transport.close().catch(() => {});
+  } catch (error) {
+    // A failed request may leave the session unusable: start the next call afresh.
+    await dropConnection(key);
+    throw error;
+  }
+  const content = Array.isArray(result.content) ? result.content : [];
+  const text = content
+    .filter((c): c is { type: "text"; text: string } => c.type === "text")
+    .map((c) => c.text)
+    .join("\n");
+  if (result.isError) {
+    const meta = result._meta as Record<string, unknown> | undefined;
+    const code = meta?.[ERROR_CODE_META];
+    const wait = meta?.[RETRY_AFTER_META];
+    throw toolError(
+      text,
+      typeof code === "string" ? code : null,
+      write,
+      typeof wait === "number" && Number.isInteger(wait) && wait > 0
+        ? Math.min(wait, 3600)
+        : null,
+    );
+  }
+  if (result.structuredContent !== undefined)
+    return { data: result.structuredContent, requestId: null };
+  try {
+    return { data: JSON.parse(text), requestId: null };
+  } catch {
+    return { data: { text }, requestId: null };
   }
 }
 

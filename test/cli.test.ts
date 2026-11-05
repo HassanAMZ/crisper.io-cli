@@ -330,6 +330,34 @@ describe("crisper (command contract)", () => {
     expect(JSON.parse(h.out[0]!).error.code).toBe("AUTH_EXPIRED");
   }, 15_000);
 
+  it("a 401 partway through a command's MCP session refreshes and opens a new session", async () => {
+    await h.run("--json", "login", "--no-browser");
+    h.state.sites = [
+      { websiteId: "w1", domain: "clinic.com", siteType: "wordpress" },
+    ];
+    const base = h.state.mcp;
+    // list_sites succeeds on the first token; the site's own tool then gets a 401.
+    h.state.mcp = (token, name) =>
+      name === "get_site_health" && token === "access-1"
+        ? { status: 401 }
+        : base(token, name);
+    h.state.calls.length = 0;
+    expect(
+      await h.run("--json", "sites", "health", "--site", "clinic.com"),
+    ).toBe(0);
+    const mcp = h.state.calls.filter((c) => c.url === `${ORIGIN}/api/mcp`);
+    const initialize = mcp.filter((c) => c.body.includes('"initialize"'));
+    expect(initialize.map((c) => c.auth)).toEqual([
+      "Bearer access-1",
+      "Bearer access-2",
+    ]);
+    const health = mcp.filter((c) => c.body.includes('"get_site_health"'));
+    expect(health.map((c) => c.auth)).toEqual([
+      "Bearer access-1",
+      "Bearer access-2",
+    ]);
+  }, 15_000);
+
   it("maps server errors by exact text and by status", async () => {
     await h.run("--json", "login", "--no-browser");
     const toolError = (text: string) => ({

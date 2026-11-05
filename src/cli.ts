@@ -1,13 +1,12 @@
 import { Command, CommanderError } from "commander";
 
 import {
-  commandCatalog,
-  commandTree,
   EXAMPLES,
   EXIT_CODES,
+  commandCatalog,
+  commandTree,
+  subcommands,
 } from "./command-tree.js";
-import { normalizeDomain } from "./commands/target.js";
-import { validateDomain, validateOrg, validateSite } from "./validation.js";
 import { login, logout, status } from "./commands/auth.js";
 import {
   type CommandContext,
@@ -15,6 +14,7 @@ import {
   sessionOf,
 } from "./commands/context.js";
 import {
+  orgsCreate,
   orgsList,
   orgsUse,
   requireOrgIdUnlessChoosing,
@@ -27,21 +27,25 @@ import {
   dnsRecords,
   eventsList,
   eventsVerify,
+  installGuide,
   installSnippet,
   integrationsConnect,
+  integrationsLink,
   integrationsList,
 } from "./commands/setup.js";
 import {
   SITE_TYPES,
+  requireSiteUnlessChoosing,
   sitesAdd,
   sitesHealth,
   sitesList,
   sitesStatus,
   sitesUse,
-  requireSiteUnlessChoosing,
 } from "./commands/sites.js";
+import { normalizeDomain } from "./commands/target.js";
 import { CliError, EXIT, sanitize } from "./errors.js";
 import { runnerAware } from "./invocation.js";
+import { closeConnections } from "./mcp/client.js";
 import {
   type Context,
   type Envelope,
@@ -49,10 +53,11 @@ import {
   type Writer,
   emit,
   envelope,
-  stdio,
   safeJson,
+  stdio,
   table,
 } from "./output.js";
+import { validateDomain, validateOrg, validateSite } from "./validation.js";
 import { VERSION } from "./version.js";
 
 export type Outcome = {
@@ -184,6 +189,8 @@ export function createProgram(deps: ProgramDeps = {}): {
         out,
       );
       exitCode = err.exit;
+    } finally {
+      await closeConnections();
     }
     if (mode.timing)
       out.err(
@@ -233,6 +240,17 @@ export function createProgram(deps: ProgramDeps = {}): {
         requireOrgIdUnlessChoosing(ctx, orgId);
         return orgsUse(ctx, await sessionOf(ctx), orgId);
       }),
+    );
+  orgs
+    .command("create <name>")
+    .description(
+      "create an organization and use it for later commands (reuses yours with the same name; no charge)",
+    )
+    .option("--yes", "don't ask for confirmation", false)
+    .action((name: string, flags: { yes: boolean }) =>
+      run("orgs create", argvForRun, async (ctx) =>
+        orgsCreate(ctx, await sessionOf(ctx), name, flags),
+      ),
     );
 
   // Every site command takes the same two selectors.
@@ -377,6 +395,18 @@ export function createProgram(deps: ProgramDeps = {}): {
       signedIn(installSnippet)(ctx, flags),
     ),
   );
+  withSite(
+    install
+      .command("guide")
+      .description(
+        "the dashboard's installation page for the website's platform",
+      )
+      .option("--open", "open it in the browser", false),
+  ).action((flags: Target & { open: boolean }) =>
+    run("install guide", argvForRun, (ctx) =>
+      signedIn(installGuide)(ctx, flags),
+    ),
+  );
 
   const events = program.command("events").description("what Crisper received");
   withSite(
@@ -409,6 +439,18 @@ export function createProgram(deps: ProgramDeps = {}): {
   ).action((flags: Target) =>
     run("integrations list", argvForRun, (ctx) =>
       signedIn(integrationsList)(ctx, flags),
+    ),
+  );
+  withSite(
+    integrations
+      .command("link")
+      .description(
+        "the page to connect any platform, such as GA4 or Google Ads (connects nothing by itself)",
+      )
+      .option("--open", "open it in the browser", false),
+  ).action((flags: Target & { open: boolean }) =>
+    run("integrations link", argvForRun, (ctx) =>
+      signedIn(integrationsLink)(ctx, flags),
     ),
   );
   withSite(
@@ -489,6 +531,27 @@ export function createProgram(deps: ProgramDeps = {}): {
     argvForRun = argv;
     exitCode = EXIT.ok;
     usageCommand = "crisper";
+    // `--version --json`: one envelope like every other command.
+    const words = argv.filter((a) => !a.startsWith("-"));
+    if (
+      modeOf(argv).json &&
+      words.length === 0 &&
+      (argv.includes("--version") || argv.includes("-V"))
+    ) {
+      writer.out(
+        safeJson(
+          envelope(
+            "version",
+            { origin: "" },
+            {
+              ok: true,
+              data: { version: VERSION },
+            },
+          ),
+        ),
+      );
+      return EXIT.ok;
+    }
     try {
       await program.parseAsync(argv, { from: "user" });
       return exitCode;
@@ -497,12 +560,21 @@ export function createProgram(deps: ProgramDeps = {}): {
         // `--help` and `--version` exit 0; help shown because a subcommand
         // is missing (`crisper orgs`) carries a nonzero code and is a usage error.
         if (error.exitCode === 0) return EXIT.ok;
+        // A group without its subcommand (`crisper sites`): commander shows
+        // help and reports "(outputHelp)"; name the choices instead.
+        const group = commandTree(program).find(
+          (c) => `crisper ${c.command}` === usageCommand,
+        )?.node;
         const usage = new CliError(
           "INVALID_ARGUMENT",
-          error.message
-            .replace(/^error:\s*/i, "")
-            .replace(/\s+/g, " ")
-            .trim(),
+          error.code === "commander.help" && group
+            ? `Choose a subcommand: ${subcommands(group)
+                .map((c) => c.name())
+                .join(", ")}.`
+            : error.message
+                .replace(/^error:\s*/i, "")
+                .replace(/\s+/g, " ")
+                .trim(),
           {
             exit: EXIT.usage,
             next: `Run \`${usageCommand} --help\`.`,

@@ -10,6 +10,7 @@ import { type CommandContext } from "../src/commands/context.js";
 import { nextStep } from "../src/commands/sites.js";
 import { type OutputMode, type Writer } from "../src/output.js";
 import { type Prompter } from "../src/prompt.js";
+import { COMMAND_TOOLS, COVERED_TOOLS } from "../src/tool-map.js";
 
 /**
  * A signed-in CLI against a fake Crisper MCP. Each test sets `tools[name]`
@@ -18,7 +19,7 @@ import { type Prompter } from "../src/prompt.js";
 const ORIGIN = "https://crisper.io";
 type Reply =
   | { result: Record<string, unknown> }
-  | { error: string; code?: string }
+  | { error: string; code?: string; meta?: Record<string, unknown> }
   | { httpStatus: number };
 
 function harness() {
@@ -84,8 +85,15 @@ function harness() {
         ? {
             isError: true,
             content: [{ type: "text", text: reply.error }],
-            ...(reply.code
-              ? { _meta: { "io.crisper/errorCode": reply.code } }
+            ...(reply.code || reply.meta
+              ? {
+                  _meta: {
+                    ...(reply.code
+                      ? { "io.crisper/errorCode": reply.code }
+                      : {}),
+                    ...reply.meta,
+                  },
+                }
               : {}),
           }
         : {
@@ -1718,5 +1726,483 @@ describe("agent approval and local validation", () => {
         (r) => r.url === `${ORIGIN}/api/mcp` && r.method === "POST",
       ),
     ).toBe(true);
+  });
+});
+
+describe("0.0.7: parity commands, one MCP session, clearer errors", () => {
+  let h: ReturnType<typeof harness>;
+  beforeEach(async () => {
+    h = harness();
+    await h.init();
+    h.tools.get_connection = () => ({
+      result: { connected: true, organizations: [ORG], instructions: "" },
+    });
+    h.tools.list_sites = () => ({
+      result: { orgId: "org_0000000001", sites: SITES, truncated: false },
+    });
+  });
+  const handoff = (url: string) => () => ({
+    result: {
+      websiteId: "w1",
+      orgId: "org_0000000001",
+      domain: "clinic.com",
+      status: "customer_action_required",
+      siteType: "wordpress",
+      url,
+      instructions: "Open this link.",
+    },
+  });
+  const posts = () =>
+    h.requests.filter((r) => r.method === "POST" && r.url.endsWith("/api/mcp"));
+
+  it("a site command resolves the site and calls its tool in one MCP session", async () => {
+    h.tools.get_site_setup = () => ({
+      result: {
+        websiteId: "w1",
+        orgId: "org_0000000001",
+        domain: "clinic.com",
+        setup: {
+          billing: true,
+          domainVerified: true,
+          scriptsGenerated: true,
+          integrationAttached: true,
+        },
+        billingStatus: "active",
+        note: "",
+        nextUrls: {},
+      },
+    });
+    expect(
+      await h.run("--json", "sites", "status", "--site", "clinic.com"),
+    ).toBe(0);
+    expect(h.calls.map((c) => c.name)).toEqual([
+      "get_connection",
+      "list_sites",
+      "get_site_setup",
+    ]);
+    // initialize, notifications/initialized and three tool calls in one
+    // session; before 0.0.7 each call opened its own (9 requests).
+    expect(posts()).toHaveLength(5);
+  });
+
+  it("a failed request drops the session, so the next call starts a new one", async () => {
+    let polls = 0;
+    h.tools.check_event = () => {
+      polls += 1;
+      // A 503 (paused, retryable) during --wait: the wait goes on.
+      if (polls === 1) return { httpStatus: 503 };
+      return {
+        result: {
+          websiteId: "w1",
+          orgId: "org_0000000001",
+          event: "GenerateLead",
+          since: new Date(h.now() - 30 * 60_000).toISOString(),
+          checkedAt: new Date(h.now()).toISOString(),
+          found: true,
+          count: 1,
+          partial: false,
+          latest: {
+            time: new Date(h.now()).toISOString(),
+            client: "Data Client",
+            receivedStatus: "200",
+            path: "/data",
+          },
+          note: "",
+        },
+      };
+    };
+    expect(
+      await h.run(
+        "--json",
+        "events",
+        "verify",
+        "--site",
+        "clinic.com",
+        "--type",
+        "lead",
+        "--wait",
+        "2",
+      ),
+    ).toBe(0);
+    expect(polls).toBe(2);
+    // Session 1: initialize, initialized, get_connection, list_sites and the
+    // failed check_event. Session 2: initialize, initialized, check_event.
+    expect(posts()).toHaveLength(8);
+  });
+
+  it("install guide and integrations link return the dashboard page and open nothing unless asked", async () => {
+    h.tools.get_installation_guide = handoff(
+      "https://crisper.io/mcp/open?org=org_0000000001&to=%2Fdashboard%2Fclinic-com%2Ftracking-scripts",
+    );
+    h.tools.get_integration_setup_link = handoff(
+      "https://crisper.io/mcp/open?org=org_0000000001&to=%2Fdashboard%2Fclinic-com%2Fintegrations",
+    );
+    expect(
+      await h.run("--json", "install", "guide", "--site", "clinic.com"),
+    ).toBe(0);
+    expect(h.json().data.url).toContain("tracking-scripts");
+    expect(h.calls.at(-1)).toEqual({
+      name: "get_installation_guide",
+      args: { websiteId: "w1" },
+    });
+    expect(await h.run("integrations", "link", "--site", "clinic.com")).toBe(0);
+    expect(h.out.join("\n")).toContain(
+      "integrations connect --org org_0000000001 --site clinic.com --platform meta",
+    );
+    expect(h.calls.at(-1)?.name).toBe("get_integration_setup_link");
+  });
+
+  it("orgs create needs approval, then creates and becomes the default", async () => {
+    let created = 0;
+    h.tools.create_organization = (args) => {
+      created += 1;
+      return {
+        result: { orgId: "org_0000000099", name: args.name, status: "created" },
+      };
+    };
+    expect(await h.run("--json", "orgs", "create", "Acme Agency")).toBe(2);
+    const proposal = h.json();
+    expect(proposal.error.code).toBe("CONFIRMATION_REQUIRED");
+    expect(proposal.data.changes[0]).toContain("Acme Agency");
+    expect(proposal.data.confirmCommand).toBe(
+      "crisper --json orgs create 'Acme Agency' --yes",
+    );
+    expect(created).toBe(0);
+    expect(
+      await h.run("--json", "orgs", "create", "Acme Agency", "--yes"),
+    ).toBe(0);
+    expect(h.json().data).toMatchObject({
+      orgId: "org_0000000099",
+      status: "created",
+      defaultChanged: true,
+    });
+    expect((await h.profile()).defaultOrgId).toBe("org_0000000099");
+    expect(await h.run("--json", "orgs", "create", "x", "--yes")).toBe(2);
+    expect(h.json().error.code).toBe("INVALID_ARGUMENT");
+    expect(created).toBe(1);
+  });
+
+  it("an orgs create the server can't confirm exits 8", async () => {
+    h.tools.create_organization = () => ({ httpStatus: 500 });
+    expect(
+      await h.run("--json", "orgs", "create", "Acme Agency", "--yes"),
+    ).toBe(8);
+    expect(h.json().error.code).toBe("WRITE_UNCONFIRMED");
+  });
+
+  it("a rate-limit error waits as long as the server says", async () => {
+    h.tools.check_event = () => ({
+      error: "Rate limit reached. Retry in 17 seconds.",
+      code: "rate_limited",
+      meta: { "io.crisper/retryAfterSeconds": 17 },
+    });
+    expect(
+      await h.run(
+        "--json",
+        "events",
+        "verify",
+        "--site",
+        "clinic.com",
+        "--type",
+        "lead",
+      ),
+    ).toBe(5);
+    expect(h.json().error).toMatchObject({
+      code: "RATE_LIMITED",
+      retryAfterSeconds: 17,
+      next: "Wait 17 seconds and try again.",
+    });
+    // Older servers: no number, one minute.
+    h.tools.check_event = () => ({
+      error: "Rate limit reached.",
+      code: "rate_limited",
+    });
+    await h.run(
+      "--json",
+      "events",
+      "verify",
+      "--site",
+      "clinic.com",
+      "--type",
+      "lead",
+    );
+    expect(h.json().error.retryAfterSeconds).toBe(60);
+  });
+
+  it("a command group without its subcommand names the choices", async () => {
+    expect(await h.run("--json", "sites")).toBe(2);
+    expect(h.json().error.message).toBe(
+      "Choose a subcommand: list, use, status, health, add.",
+    );
+    expect(h.json().error.next).toBe("Run `crisper sites --help`.");
+  });
+
+  it("--version --json is one envelope; plain --version stays a bare number", async () => {
+    expect(await h.run("--json", "--version")).toBe(0);
+    expect(h.out).toHaveLength(1);
+    expect(h.json()).toMatchObject({
+      command: "version",
+      ok: true,
+      data: { version: "0.0.7" },
+    });
+    expect(await h.run("--version")).toBe(0);
+    expect(h.out).toEqual(["0.0.7"]);
+  });
+
+  it("billing cancel shows the period end as a UTC minute, not raw ISO", async () => {
+    h.tools.cancel_billing = () => ({
+      result: {
+        websiteId: "w1",
+        orgId: "org_0000000001",
+        domain: "clinic.com",
+        status: "confirmation_required",
+        plan: "Recovery",
+        currentPeriodEnd: "2026-11-05T21:08:35.000Z",
+        confirmation: "c1",
+      },
+    });
+    expect(
+      await h.run("--json", "billing", "cancel", "--site", "clinic.com"),
+    ).toBe(2);
+    expect(h.json().data.changes[0]).toContain(
+      "Tracking continues until 2026-11-05 21:08 UTC, then stops.",
+    );
+  });
+});
+
+describe("0.0.7 council round 1", () => {
+  let h: ReturnType<typeof harness>;
+  const site = {
+    websiteId: "w1",
+    orgId: "org_0000000001",
+    domain: "clinic.com",
+  };
+  beforeEach(async () => {
+    h = harness();
+    await h.init();
+    h.tools.get_connection = () => ({
+      result: { connected: true, organizations: [ORG], instructions: "" },
+    });
+    h.tools.list_sites = () => ({
+      result: { orgId: "org_0000000001", sites: SITES, truncated: false },
+    });
+  });
+
+  it("orgs create says before approval that it changes the saved organization and website", async () => {
+    h.tools.get_site_setup = () => ({ result: {} });
+    await h.run("sites", "use", "clinic.com");
+    expect(await h.run("--json", "orgs", "create", "Acme Agency")).toBe(2);
+    expect(h.json().data.changes).toEqual([
+      "Create the organization Acme Agency, or reuse yours with that name. No charge is made.",
+      "Later commands on this computer will use it; if it isn't the organization saved now, they stop using the saved website clinic.com.",
+    ]);
+    // Reusing the organization already saved keeps the saved website.
+    h.tools.create_organization = () => ({
+      result: { orgId: ORG.orgId, name: ORG.name, status: "exists" },
+    });
+    expect(await h.run("--json", "orgs", "create", ORG.name, "--yes")).toBe(0);
+    expect(await h.profile()).toMatchObject({
+      defaultOrgId: ORG.orgId,
+      defaultSiteDomain: "clinic.com",
+    });
+    // Another organization drops it.
+    h.tools.create_organization = () => ({
+      result: { orgId: "org_0000000077", name: "Acme", status: "created" },
+    });
+    expect(await h.run("--json", "orgs", "create", "Acme", "--yes")).toBe(0);
+    expect(await h.profile()).toMatchObject({
+      defaultOrgId: "org_0000000077",
+      defaultSiteDomain: null,
+    });
+  });
+
+  it("an unconfirmed orgs create points to orgs list, and the next step names the organization", async () => {
+    h.tools.create_organization = () => ({ httpStatus: 500 });
+    expect(
+      await h.run("--json", "orgs", "create", "Acme Agency", "--yes"),
+    ).toBe(8);
+    expect(h.json().error).toMatchObject({
+      code: "WRITE_UNCONFIRMED",
+      next: "Run `crisper orgs list` before trying again.",
+    });
+    h.tools.create_organization = () => ({
+      result: {
+        orgId: "org_0000000077",
+        name: "Acme Agency",
+        status: "exists",
+      },
+    });
+    expect(
+      await h.run("--json", "orgs", "create", "Acme Agency", "--yes"),
+    ).toBe(0);
+    expect(h.json().data.next.command).toBe(
+      "crisper sites add <domain> --type <platform> --org org_0000000077",
+    );
+  });
+
+  it("follow-up hints keep the organization and website the command acted on", async () => {
+    const handoff = () => ({
+      result: {
+        ...site,
+        status: "customer_action_required",
+        siteType: "wordpress",
+        url: "https://crisper.io/mcp/open?org=org_0000000001&to=%2Fx",
+        instructions: "",
+      },
+    });
+    h.tools.get_installation_guide = handoff;
+    h.tools.get_integration_setup_link = handoff;
+    await h.run("install", "guide", "--site", "clinic.com");
+    expect(h.out.join("\n")).toContain(
+      "crisper install snippet --org org_0000000001 --site clinic.com",
+    );
+    await h.run("integrations", "link", "--site", "clinic.com");
+    expect(h.out.join("\n")).toContain(
+      "crisper integrations list --org org_0000000001 --site clinic.com",
+    );
+  });
+
+  it("sites add reports created, existing or restored", async () => {
+    const reply = (extra: Record<string, unknown>) => () => ({
+      result: {
+        ...site,
+        domain: "new.example",
+        status: "created",
+        next: "",
+        billingUrl: "",
+        integrationsUrl: "",
+        ...extra,
+      },
+    });
+    for (const [extra, outcome, text] of [
+      [
+        { replay: false, outcome: "restored" },
+        "restored",
+        "Restored new.example",
+      ],
+      [
+        { replay: true, outcome: "existing" },
+        "existing",
+        "was already in this organization",
+      ],
+      [{ replay: false, outcome: "created" }, "created", "Added new.example."],
+      // An older server sends no outcome: derived from replay.
+      [{ replay: true }, "existing", "was already in this organization"],
+    ] as const) {
+      h.tools.create_site = reply(extra);
+      expect(
+        await h.run(
+          "--json",
+          "sites",
+          "add",
+          "new.example",
+          "--type",
+          "shopify",
+          "--yes",
+        ),
+      ).toBe(0);
+      expect(h.json().data.outcome).toBe(outcome);
+      await h.run("sites", "add", "new.example", "--type", "shopify", "--yes");
+      expect(h.out.join("\n")).toContain(text);
+    }
+  });
+
+  it("every command calls the MCP tool its tool-map entry names first", async () => {
+    // A generic answer for every tool, so each command reaches its own call.
+    const any = () => () => ({
+      result: {
+        ...site,
+        connected: true,
+        organizations: [ORG],
+        instructions: "",
+        sites: SITES,
+        truncated: false,
+        status: "created",
+        currentPeriodEnd: null,
+        setup: {},
+        url: "https://crisper.io/x",
+        records: [{ type: "CNAME", host: "a", value: "b" }],
+        state: "verified",
+        found: true,
+        count: 1,
+        latest: null,
+        checkedAt: new Date(h.now()).toISOString(),
+        name: "Acme",
+        integrationId: "i1",
+      },
+    });
+    for (const tool of COVERED_TOOLS) h.tools[tool] = any();
+    // Two server steps: a confirmation, then the cancellation.
+    h.tools.cancel_billing = (args) => ({
+      result: {
+        ...site,
+        status: args.confirmation
+          ? "cancel_requested"
+          : "confirmation_required",
+        confirmation: "c1",
+        currentPeriodEnd: null,
+      },
+    });
+    h.tools.connect_integration = () => ({
+      result: {
+        ...site,
+        integrationId: "i1",
+        platform: "meta",
+        pixelId: "1234567890",
+        status: "connected",
+        attached: true,
+        note: "",
+      },
+    });
+    h.setStdin("dummy-platform-token-for-test");
+    const S = ["--site", "clinic.com"];
+    const argv: Record<string, string[]> = {
+      "orgs list": ["orgs", "list"],
+      "orgs use": ["orgs", "use", "org_0000000001"],
+      "orgs create": ["orgs", "create", "Acme", "--yes"],
+      "sites list": ["sites", "list"],
+      "sites use": ["sites", "use", "clinic.com"],
+      "sites status": ["sites", "status", ...S],
+      "sites health": ["sites", "health", ...S],
+      "sites add": [
+        "sites",
+        "add",
+        "new.example",
+        "--type",
+        "shopify",
+        "--yes",
+      ],
+      "billing status": ["billing", "status", ...S],
+      "billing link": ["billing", "link", ...S],
+      "billing cancel": ["billing", "cancel", ...S, "--yes"],
+      "dns records": ["dns", "records", ...S],
+      "dns check": ["dns", "check", ...S],
+      "install snippet": ["install", "snippet", ...S],
+      "install guide": ["install", "guide", ...S],
+      "events list": ["events", "list", ...S],
+      "events verify": ["events", "verify", ...S, "--type", "purchase"],
+      "integrations list": ["integrations", "list", ...S],
+      "integrations link": ["integrations", "link", ...S],
+      "integrations connect": [
+        "integrations",
+        "connect",
+        ...S,
+        "--platform",
+        "meta",
+        "--pixel",
+        "1234567890",
+        "--token-stdin",
+        "--yes",
+      ],
+    };
+    // login is covered by the device-flow tests; local commands call nothing.
+    const remote = Object.entries(COMMAND_TOOLS).filter(
+      ([command, tools]) => tools.length > 0 && command !== "login",
+    );
+    expect(remote.map(([c]) => c).sort()).toEqual(Object.keys(argv).sort());
+    for (const [command, tools] of remote) {
+      expect(await h.run("--json", ...argv[command]!), command).toBe(0);
+      expect(h.calls.at(-1)?.name, command).toBe(tools[0]);
+    }
   });
 });

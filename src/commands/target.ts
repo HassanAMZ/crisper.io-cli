@@ -34,7 +34,7 @@ export async function resolveOrg(
       "This login has no Crisper organization yet.",
       {
         exit: EXIT.customerAction,
-        next: "Create one at https://crisper.io/dashboard, then run this again.",
+        next: "Create one: crisper orgs create <business name>",
       },
     );
   throw new CliError("INVALID_ARGUMENT", "Choose an organization first.", {

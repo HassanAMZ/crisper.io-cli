@@ -1,14 +1,14 @@
-import { readFileSync } from "node:fs";
 import { type Command } from "commander";
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
-import { defaultContext } from "../src/commands/context.js";
 import { createProgram } from "../src/cli.js";
 import {
   ACCOUNT_CHANGES,
   commandCatalog,
   leafCommands,
 } from "../src/command-tree.js";
+import { defaultContext } from "../src/commands/context.js";
 import { ERROR_CODES, EXIT } from "../src/errors.js";
 import { suggestionsFor, words } from "../src/shell.js";
 
@@ -67,6 +67,7 @@ describe("agent command discovery and help", () => {
     expect([...ACCOUNT_CHANGES].sort()).toEqual([
       "billing cancel",
       "integrations connect",
+      "orgs create",
       "sites add",
     ]);
     expect(catalog.errorCodes).toEqual(ERROR_CODES);
@@ -186,7 +187,7 @@ describe("agent command discovery and help", () => {
     },
   );
 
-  it("ships the 0.0.6 agent guidance with a narrowly allowed skill", () => {
+  it("ships the 0.0.7 agent guidance with a narrowly allowed skill", () => {
     const skill = readFileSync("skills/crisper/SKILL.md", "utf8");
     expect(skill).toMatch(/^---\nname: crisper\ndescription: Use when/);
     expect(skill.split("\n").length).toBeLessThanOrEqual(95);
@@ -207,7 +208,7 @@ describe("agent command discovery and help", () => {
     expect(readme).toContain("arrow-key pickers");
     expect(readme).toContain("--timing");
     const pkg = JSON.parse(readFileSync("package.json", "utf8"));
-    expect(pkg.version).toBe("0.0.6");
+    expect(pkg.version).toBe("0.0.7");
     expect(pkg.files).toEqual(["dist", "README.md"]);
   });
 });

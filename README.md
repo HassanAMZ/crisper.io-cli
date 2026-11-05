@@ -26,11 +26,15 @@ npx crisperio --json orgs list   # one JSON object on stdout, progress on stderr
 
 ## For AI agents
 
-Version 0.0.6 adds command discovery, examples in every command's help, precise
+Version 0.0.7 gives every Crisper MCP tool a command (`orgs create`,
+`install guide`, `integrations link` are new), lists each command's MCP tools
+in `crisper commands --json` (`mcpTools`), runs a command's calls over one MCP
+session (about a second faster for site commands), reports the server's retry
+time after a rate limit (and `events verify --wait` waits it out), and answers `--version --json` with an envelope.
+Version 0.0.6 added command discovery, examples in every command's help, precise
 JSON usage errors, local target validation, and structured approval requests.
-It also avoids an unnecessary MCP connection per tool call. The interactive
-shell and arrow-key pickers remain available for humans; add `--timing` to show
-request durations on stderr.
+The interactive shell and arrow-key pickers remain available for humans; add
+`--timing` to show request durations on stderr.
 
 Install the skill for Claude Code, Codex, Cursor, or another compatible agent:
 
@@ -54,7 +58,7 @@ terminal prompt or --token-stdin piped by the human.
 `crisper commands --json` lists every command, argument, option, example, exit
 code, and error code. See [the skill](skills/crisper/SKILL.md) for setup order.
 
-Without `--yes`, `sites add`, `billing cancel`, and `integrations connect` return
+Without `--yes`, `orgs create`, `sites add`, `billing cancel`, and `integrations connect` return
 `CONFIRMATION_REQUIRED` (exit 2) in JSON or non-interactive mode. The envelope's
 `data.changes` describes the proposed change and `data.confirmCommand` preserves
 the invocation with `--yes` added. Show the changes, get human approval, then run
@@ -69,18 +73,20 @@ is unconfirmed: check status before retrying.
 | `crisper login`                                                                  | Opens your browser; you approve a short code. `--no-browser` prints the link only.                                            |
 | `crisper auth status`                                                            | Who is signed in on this computer, and the saved organization and website.                                                    |
 | `crisper orgs list`, `orgs use [id]`                                             | Organizations this login can use; choose one for later commands (no ID: pick from a list).                                    |
+| `crisper orgs create <name>`                                                     | Create an organization and use it for later commands (reuses yours with the same name; no charge).                            |
 | `crisper sites list`, `sites use [domain]`                                       | Websites in the organization; choose one for later commands (none given: pick from a list).                                   |
 | `crisper sites add <domain> --type <platform>`                                   | Add a website (no charge). Defaults: USD, this computer's timezone, restricted category on.                                   |
 | `crisper sites status`                                                           | Setup progress and the one next step.                                                                                         |
 | `crisper sites health`                                                           | Purchases and leads Crisper received today and this week.                                                                     |
 | `crisper billing link`, `billing status`, `billing cancel`                       | The page to pay, the subscription state, and cancel at the end of the period.                                                 |
 | `crisper dns records`, `dns check`                                               | The tracking domain's DNS records; check them (exit 6 until verified).                                                        |
-| `crisper install snippet`                                                        | The tracking script for the website's platform.                                                                               |
+| `crisper install snippet`, `install guide`                                       | The tracking script for the website's platform; the dashboard's installation page for it.                                     |
 | `crisper integrations list`, `integrations connect --platform meta --pixel <id>` | Connected platforms; connect Meta or TikTok. The token is asked for at a hidden prompt (or `--token-stdin`), never as a flag. |
+| `crisper integrations link`                                                      | The dashboard page to connect any other platform, such as GA4 or Google Ads.                                                  |
 | `crisper events list`, `events verify --type purchase --wait 5`                  | Recent events; check that a test purchase or lead arrived.                                                                    |
 | `crisper logout`                                                                 | Revokes the sign-in and forgets it.                                                                                           |
 
-Site commands take `--org <orgId>` and `--site <domain or id>`. `sites add`, `billing cancel`, and `integrations connect` ask for a typed yes in human interactive mode, or require `--yes` after approval in scripts.
+Site commands take `--org <orgId>` and `--site <domain or id>`. `orgs create`, `sites add`, `billing cancel`, and `integrations connect` ask for a typed yes in human interactive mode, or require `--yes` after approval in scripts.
 
 Add `--json` before the command for a single machine-readable envelope: `schemaVersion`, `command`, `ok`, `context`, `data`, `error`, `meta`. Exit codes: 0 ok, 1 failure, 2 usage, 3 not signed in, 4 no access, 5 rate limited, 6 needs your action, 7 unavailable, 8 unconfirmed, 130 interrupted.
 
@@ -93,3 +99,7 @@ Add `--json` before the command for a single machine-readable envelope: `schemaV
 - If a connection to Crisper can't be opened, the CLI tries twice more before giving up. Nothing has been sent at that point, so a retry can't repeat a change.
 
 Config (no secrets) lives in `~/.config/crisperio/config.json`, or `CRISPER_CONFIG_DIR`. On macOS and Linux the directory and file are owner-only; on Windows they inherit your user profile's permissions, so keep `CRISPER_CONFIG_DIR` inside your own profile.
+
+## Releasing
+
+Every Crisper MCP tool has a command; `src/tool-map.ts` says which. Before a release, run `pnpm run test:parity` signed in (`crisper login`): it reads the tool list from the live server and fails if a tool has no command or a command names a tool the server doesn't have.
