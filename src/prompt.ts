@@ -94,10 +94,10 @@ export const terminal: Prompter = {
     if (process.stdin.isTTY)
       throw new CliError(
         "INVALID_ARGUMENT",
-        "--token-stdin needs the token piped in.",
+        "Stdin input needs the token or configuration JSON piped in.",
         {
           exit: EXIT.usage,
-          next: "Pipe it, or drop --token-stdin to type it at a hidden prompt.",
+          next: "Pipe it, or omit the stdin option to use the hidden prompt.",
         },
       );
     const chunks: Buffer[] = [];

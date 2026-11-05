@@ -41,6 +41,7 @@ export const COMMAND_TOOLS: Record<string, readonly string[]> = {
   "logs stats": ["get_event_stats"],
   "integrations list": ["list_integrations"],
   "integrations connect": ["connect_integration"],
+  "integrations update": ["update_integration"],
   // start_integration_connection and attach_integration return the same setup page.
   "integrations link": [
     "get_integration_setup_link",

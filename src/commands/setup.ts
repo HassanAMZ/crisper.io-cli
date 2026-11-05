@@ -526,13 +526,20 @@ export async function eventsVerify(
 export async function integrationsList(
   ctx: CommandContext,
   session: Session,
-  flags: TargetFlags,
+  flags: TargetFlags & { scope?: string },
 ) {
+  if (flags.scope && flags.scope !== "site" && flags.scope !== "organization")
+    throw new CliError(
+      "INVALID_ARGUMENT",
+      "Use --scope site or organization.",
+      { exit: EXIT.usage },
+    );
   const { site, d, data } = await siteCall(
     ctx,
     session,
     flags,
     "list_integrations",
+    flags.scope ? { scope: flags.scope } : {},
   );
   return {
     data,
@@ -544,23 +551,27 @@ export async function integrationsList(
         d.truncated === true
           ? [
               "",
-              "Crisper checked only the first 50 attachments; see the dashboard for the rest.",
+              flags.scope === "organization"
+                ? "Only the first 100 organization rows were checked; see the dashboard for the rest."
+                : "Only the first 50 attachments were checked; see the dashboard for the rest.",
             ]
           : [];
       if (!items.length)
         return [
           d.truncated === true
-            ? `No integrations found among the first 50 on ${safeText(site.domain)}.`
-            : `No integrations on ${safeText(site.domain)} yet. Connect one: crisper integrations connect --platform meta --pixel <id>`,
+            ? `No integrations found in this truncated list for ${safeText(site.domain)}.`
+            : `No integrations in ${flags.scope === "organization" ? "this organization" : safeText(site.domain)} yet. Connect one: crisper integrations connect --platform meta --pixel <id>`,
           ...more,
         ].join("\n");
       return [
         table([
-          ["ID", "TYPE", "NAME"],
+          ["ID", "TYPE", "NAME", "PROVIDER ID", "ATTACHED"],
           ...items.map((i) => [
             str(i.integrationId) ?? "",
             str(i.type) ?? "",
             str(i.name) ?? "",
+            str(i.providerIdentifier) ?? "",
+            i.attached === false ? "no" : "yes",
           ]),
         ]),
         ...more,
@@ -593,7 +604,7 @@ export async function integrationsLink(
         `Open this to connect a platform to ${safeText(site.domain)}:`,
         safeText(url ?? ""),
         "",
-        `Meta or TikTok can be connected here instead: crisper integrations connect ${targetArgs(orgId, site.domain)} --platform meta --pixel <id>`,
+        `Manual configurations can also be connected here; Meta/TikTok example: crisper integrations connect ${targetArgs(orgId, site.domain)} --platform meta --pixel <id>`,
         `Then run \`crisper integrations list ${targetArgs(orgId, site.domain)}\`.`,
       ].join("\n"),
   };
@@ -607,69 +618,170 @@ export async function integrationsConnect(
   ctx: CommandContext,
   session: Session,
   flags: TargetFlags & {
-    platform: string;
-    pixel: string;
+    platform?: string;
+    pixel?: string;
+    integration?: string;
     label?: string;
-    tokenStdin: boolean;
+    tokenStdin?: boolean;
+    configurationStdin?: boolean;
     yes: boolean;
   },
+  update = false,
 ) {
-  const platform = flags.platform.toLowerCase();
-  if (platform !== "meta" && platform !== "tiktok")
+  const platform = flags.platform?.toLowerCase();
+  if (
+    platform &&
+    ![
+      "meta",
+      "tiktok",
+      "snapchat",
+      "twitter",
+      "ga4",
+      "gads",
+      "microsoft_ads",
+      "linkedin",
+      "pinterest",
+    ].includes(platform)
+  )
     throw new CliError(
       "INVALID_ARGUMENT",
-      "Use --platform meta or --platform tiktok.",
+      "Use a dashboard-supported --platform. See integrations link for setup.",
       { exit: EXIT.usage },
     );
-  const pixelId = flags.pixel.trim();
+  if (
+    (!update && !platform && !flags.integration) ||
+    (update && !flags.integration) ||
+    (flags.tokenStdin && flags.configurationStdin) ||
+    (flags.pixel && flags.configurationStdin) ||
+    (flags.tokenStdin && !flags.pixel) ||
+    (flags.pixel && platform !== "meta" && platform !== "tiktok")
+  )
+    throw new CliError(
+      "INVALID_ARGUMENT",
+      "Use --platform with configuration input, or --integration for an existing connection. Legacy --pixel and --token-stdin support Meta/TikTok only; do not combine input modes.",
+      { exit: EXIT.usage },
+    );
+  if (
+    (update && (flags.pixel || flags.tokenStdin)) ||
+    (!update &&
+      flags.integration &&
+      flags.label !== undefined &&
+      !flags.configurationStdin &&
+      !flags.pixel)
+  )
+    throw new CliError(
+      "INVALID_ARGUMENT",
+      "Updates and label changes require full configuration. Attach by ID alone without --label, or use --configuration-stdin.",
+      { exit: EXIT.usage },
+    );
   const { site } = await resolveSite(ctx, session, flags);
   const changes = [
-    `Connect ${platform === "meta" ? "Meta" : "TikTok"} pixel ${safeText(pixelId)} to ${safeText(site.domain)}${flags.label ? ` with label ${safeText(flags.label)}` : ""}. If your organization already saved this pixel, the new token replaces the old one for every site using it.`,
+    `${update ? "Update" : "Connect"} ${safeText(platform ?? flags.integration)}${flags.pixel ? ` pixel ${safeText(flags.pixel)}` : ""} on ${safeText(site.domain)}${flags.label ? ` with label ${safeText(flags.label)}` : ""}. Credentials are org-shared: replacing the configuration affects every site using it. Omitted event mappings are removed; omitted GA4 apiSecret is preserved on update.`,
   ];
   ctx.writer.err(changes.join("\n"));
-  // Approval precedes secret input, including piped stdin.
   await confirm(
     ctx.prompter,
-    ctx.interactive && !ctx.mode.json && !flags.tokenStdin,
+    ctx.interactive &&
+      !ctx.mode.json &&
+      !flags.tokenStdin &&
+      !flags.configurationStdin,
     flags.yes,
-    "Connect it?",
+    "Apply this integration change?",
     { changes, argv: ctx.argv ?? [] },
   );
-  const tokenName =
-    platform === "meta"
-      ? "Conversions API access token"
-      : "Events API access token";
-  const accessToken = flags.tokenStdin
-    ? await ctx.prompter.stdin()
-    : await ctx.prompter.secret(`${tokenName} (hidden): `);
-  if (accessToken.length < 20)
-    throw new CliError(
-      "INVALID_ARGUMENT",
-      `That doesn't look like a ${tokenName}.`,
-      { exit: EXIT.usage },
-    );
-  const { data } = await callTool(
+  const input: Record<string, unknown> = {
+    websiteId: site.websiteId,
+    ...(platform ? { platform } : {}),
+    ...(flags.integration ? { integrationId: flags.integration } : {}),
+    ...(flags.label !== undefined ? { label: flags.label } : {}),
+  };
+  if (flags.pixel) {
+    const accessToken = flags.tokenStdin
+      ? await ctx.prompter.stdin()
+      : await ctx.prompter.secret("API access token (hidden): ");
+    if (accessToken.length < 20)
+      throw new CliError(
+        "INVALID_ARGUMENT",
+        "That doesn't look like a full API access token.",
+        { exit: EXIT.usage },
+      );
+    input.pixelId = flags.pixel.trim();
+    input.accessToken = accessToken;
+  } else if (update || !flags.integration || flags.configurationStdin) {
+    const raw = flags.configurationStdin
+      ? await ctx.prompter.stdin()
+      : await ctx.prompter.secret(
+          "Full provider configuration JSON (hidden; see integrations --help): ",
+        );
+    try {
+      const parsed: unknown = JSON.parse(raw);
+      if (
+        !parsed ||
+        typeof parsed !== "object" ||
+        Array.isArray(parsed) ||
+        Object.values(parsed).some((v) => typeof v !== "string") ||
+        raw.length > 24000
+      )
+        throw new Error();
+      input.configuration = parsed;
+    } catch {
+      throw new CliError(
+        "INVALID_ARGUMENT",
+        "Provide a JSON object of provider configuration string fields. Input is never echoed.",
+        { exit: EXIT.usage },
+      );
+    }
+  }
+  const tool = update ? "update_integration" : "connect_integration";
+  let { data } = await callTool(
     session,
     ctx.config.origin,
-    "connect_integration",
-    {
-      websiteId: site.websiteId,
-      platform,
-      pixelId,
-      accessToken,
-      ...(flags.label ? { label: flags.label } : {}),
-    },
+    tool,
+    input,
     ctx.fetcher,
     { write: true, signal: ctx.signal },
   );
-  const d = rec(data);
+  let d = rec(data);
+  if (d.status === "confirmation_required") {
+    if (typeof d.confirmation !== "string")
+      throw new CliError(
+        "CAPABILITY_UNAVAILABLE",
+        "The server did not return an integration confirmation.",
+        { exit: EXIT.unavailable },
+      );
+    const impact = `${str(d.note) ?? "Credentials are shared across the organization."} Currently used by ${typeof d.affectedSiteCount === "number" ? d.affectedSiteCount : "unknown"} sites.`;
+    const summary = d.changes ? `Changes: ${JSON.stringify(d.changes)}` : "";
+    ctx.writer.err(safeText([summary, impact].filter(Boolean).join("\n")));
+    await confirm(
+      ctx.prompter,
+      ctx.interactive &&
+        !ctx.mode.json &&
+        !flags.tokenStdin &&
+        !flags.configurationStdin,
+      flags.yes,
+      "Confirm this shared integration change?",
+      { changes: [summary, impact].filter(Boolean), argv: ctx.argv ?? [] },
+    );
+    ({ data } = await callTool(
+      session,
+      ctx.config.origin,
+      tool,
+      { ...input, confirmation: d.confirmation },
+      ctx.fetcher,
+      { write: true, signal: ctx.signal },
+    ));
+    d = rec(data);
+  }
+  if (!["connected", "updated", "already_connected"].includes(String(d.status)))
+    throw new CliError(
+      "CAPABILITY_UNAVAILABLE",
+      "The server did not confirm an integration save. Check integrations list before retrying.",
+      { exit: EXIT.unavailable },
+    );
   return {
     data,
     human: () =>
-      [
-        `${platform === "meta" ? "Meta" : "TikTok"} pixel ${safeText(d.pixelId ?? pixelId)} ${d.status === "updated" ? "updated" : d.status === "already_connected" ? "was already connected" : "connected"} on ${safeText(site.domain)}.`,
-        "This doesn't prove the platform accepts events. Send a test, then run `crisper events verify --type purchase`.",
-      ].join("\n"),
+      `${safeText(d.platform ?? platform ?? "Integration")} ${safeText(d.status)} on ${safeText(site.domain)}.\nThis does not prove provider acceptance or delivery.`,
   };
 }
 

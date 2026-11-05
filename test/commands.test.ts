@@ -484,6 +484,7 @@ describe("error codes from the server", () => {
     ["not_enabled", 7, "CAPABILITY_UNAVAILABLE"],
     ["unavailable", 1, "SERVER_ERROR"],
     ["invalid_argument", 2, "INVALID_ARGUMENT"],
+    ["integration_conflict", 4, "CONFLICT"],
     ["internal", 1, "SERVER_ERROR"],
   ])("%s → exit %i", async (code, exit, cliCode) => {
     h.tools.get_install_snippet = () => ({
@@ -635,6 +636,199 @@ describe("dns, events, integrations and billing", () => {
       await h.run("--json", "events", "verify", "--type", "pageview"),
     ).toBe(2);
   });
+
+  it("slice2 sends full configuration only after approval, then repeats the exact preview with confirmation", async () => {
+    const secret = "slice2-secret-canary";
+    h.setStdin(
+      JSON.stringify({ measurementId: "G-FIXTURE", apiSecret: secret }),
+    );
+    h.tools.connect_integration = (args) => ({
+      result: {
+        ...site,
+        platform: "ga4",
+        status: args.confirmation ? "connected" : "confirmation_required",
+        confirmation: "approval",
+        affectedSiteCount: 3,
+        note: "Shared across the organization",
+      },
+    });
+    expect(
+      await h.run(
+        "--json",
+        "integrations",
+        "connect",
+        "--platform",
+        "ga4",
+        "--configuration-stdin",
+      ),
+    ).toBe(2);
+    expect(h.calls.some((c) => c.name === "connect_integration")).toBe(false);
+    expect(
+      await h.run(
+        "--json",
+        "integrations",
+        "connect",
+        "--platform",
+        "ga4",
+        "--configuration-stdin",
+        "--yes",
+      ),
+    ).toBe(0);
+    const calls = h.calls.filter((c) => c.name === "connect_integration");
+    expect(calls).toHaveLength(2);
+    expect(calls[1]?.args).toEqual({
+      ...calls[0]?.args,
+      confirmation: "approval",
+    });
+    expect(calls[0]?.args.configuration).toEqual({
+      measurementId: "G-FIXTURE",
+      apiSecret: secret,
+    });
+    expect([...h.out, ...h.err].join("\n")).not.toContain(secret);
+  });
+
+  it("slice2 declining the shared-impact preview prevents the confirming write", async () => {
+    h.setSecret(JSON.stringify({ measurementId: "G-FIXTURE" }));
+    h.answers.push("yes", "no");
+    h.tools.connect_integration = () => ({
+      result: {
+        ...site,
+        platform: "ga4",
+        status: "confirmation_required",
+        confirmation: "must-not-use",
+        affectedSiteCount: 4,
+        note: "Affects all sites sharing credentials",
+      },
+    });
+    expect(await h.run("integrations", "connect", "--platform", "ga4")).toBe(2);
+    expect(
+      h.calls.filter((c) => c.name === "connect_integration"),
+    ).toHaveLength(1);
+    expect(h.calls.some((c) => c.args.confirmation)).toBe(false);
+  });
+
+  it("slice2 updates by ID with hidden input and attaches existing integrations without asking for secrets", async () => {
+    h.setSecret(
+      JSON.stringify({
+        conversionId: "AW-17603473116",
+        purchase: "purchase-label",
+      }),
+    );
+    h.tools.update_integration = (args) => ({
+      result: {
+        ...site,
+        platform: "gads",
+        status: args.confirmation ? "updated" : "confirmation_required",
+        confirmation: "update-approval",
+        note: "Shared",
+      },
+    });
+    expect(
+      await h.run(
+        "--json",
+        "integrations",
+        "update",
+        "--integration",
+        "i1",
+        "--yes",
+      ),
+    ).toBe(0);
+    expect(
+      h.calls.find((c) => c.name === "update_integration")?.args,
+    ).toMatchObject({
+      integrationId: "i1",
+      configuration: { conversionId: "AW-17603473116" },
+    });
+    h.tools.connect_integration = (args) => ({
+      result: {
+        ...site,
+        platform: "gads",
+        status: args.confirmation ? "connected" : "confirmation_required",
+        confirmation: "attach-approval",
+        changes: {
+          integrationId: "i1",
+          operations: ["replace_configuration"],
+          removedEventKeys: ["generateLead"],
+          credentials: { capiToken: "replaced" },
+        },
+        note: "Shared",
+      },
+    });
+    expect(
+      await h.run(
+        "--json",
+        "integrations",
+        "connect",
+        "--integration",
+        "i1",
+        "--yes",
+      ),
+    ).toBe(0);
+    expect(h.err.join("\n")).toContain("generateLead");
+    expect(h.err.join("\n")).toContain("replace_configuration");
+    expect(h.calls.find((c) => c.name === "connect_integration")?.args).toEqual(
+      { websiteId: "w1", integrationId: "i1" },
+    );
+  });
+
+  it("slice2 rejects malformed secret JSON without echo and supports org list discovery", async () => {
+    h.setStdin("secret-canary-invalid-json");
+    expect(
+      await h.run(
+        "--json",
+        "integrations",
+        "connect",
+        "--platform",
+        "ga4",
+        "--configuration-stdin",
+        "--yes",
+      ),
+    ).toBe(2);
+    expect([...h.out, ...h.err].join("\n")).not.toContain(
+      "secret-canary-invalid-json",
+    );
+    expect(h.calls.some((c) => c.name === "connect_integration")).toBe(false);
+    h.tools.list_integrations = (args) => ({
+      result: {
+        ...site,
+        integrations: [],
+        truncated: false,
+        scope: args.scope,
+      },
+    });
+    expect(
+      await h.run("--json", "integrations", "list", "--scope", "organization"),
+    ).toBe(0);
+    expect(
+      h.calls.find((c) => c.name === "list_integrations")?.args.scope,
+    ).toBe("organization");
+  });
+
+  it.each([
+    "This integration change conflicts with the site's existing LinkedIn integration. No change was made.",
+    "This integration change conflicts with an existing provider identifier. No change was made.",
+  ])(
+    "integration conflict is a refusal, not an uncertain write: %s",
+    async (message) => {
+      h.tools.connect_integration = () => ({
+        error: message,
+        code: "integration_conflict",
+      });
+      expect(
+        await h.run(
+          "--json",
+          "integrations",
+          "connect",
+          "--integration",
+          "i1",
+          "--yes",
+        ),
+      ).toBe(4);
+      expect(h.json().error.code).toBe("CONFLICT");
+      expect(h.json().error.message).toBe(message);
+      expect(JSON.stringify(h.json())).not.toContain("may have completed");
+    },
+  );
 
   it("integrations connect reads the token hidden, never prints it, and needs a yes", async () => {
     const token = "EAAB" + "x".repeat(40);
@@ -1984,10 +2178,10 @@ describe("0.0.7: parity commands, one MCP session, clearer errors", () => {
     expect(h.json()).toMatchObject({
       command: "version",
       ok: true,
-      data: { version: "0.0.10" },
+      data: { version: "0.0.11" },
     });
     expect(await h.run("--version")).toBe(0);
-    expect(h.out).toEqual(["0.0.10"]);
+    expect(h.out).toEqual(["0.0.11"]);
   });
 
   it("billing cancel shows the period end as a UTC minute, not raw ISO", async () => {
@@ -2195,6 +2389,15 @@ describe("0.0.7 council round 1", () => {
         note: "",
       },
     });
+    h.tools.update_integration = () => ({
+      result: {
+        ...site,
+        platform: "ga4",
+        status: "updated",
+        integrationId: "i1",
+      },
+    });
+    h.setSecret(JSON.stringify({ measurementId: "G-FIXTURE" }));
     h.setStdin("dummy-platform-token-for-test");
     h.tools.check_install = () => ({
       result: { sourceStatus: "found", note: "Source only" },
@@ -2228,6 +2431,14 @@ describe("0.0.7 council round 1", () => {
       "events verify": ["events", "verify", ...S, "--type", "purchase"],
       "integrations list": ["integrations", "list", ...S],
       "integrations link": ["integrations", "link", ...S],
+      "integrations update": [
+        "integrations",
+        "update",
+        ...S,
+        "--integration",
+        "i1",
+        "--yes",
+      ],
       "logs list": ["logs", "list", ...S, "--since", "24h"],
       "logs export": [
         "logs",
