@@ -10,6 +10,12 @@
  * the server's own repository against its code.
  */
 export const COMMAND_TOOLS: Record<string, readonly string[]> = {
+  "settings get": ["get_site_settings"],
+  "settings update": ["update_site_settings"],
+  "alerts get": ["get_alert_settings"],
+  "alerts update": ["update_alert_settings"],
+  "logs resend-options": ["get_resend_options"],
+  "logs resend": ["resend_event"],
   login: ["get_connection"],
   logout: [],
   "auth status": [],

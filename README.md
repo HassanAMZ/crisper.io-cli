@@ -131,3 +131,55 @@ For new configurations, use `integrations connect --platform <platform>`. Enter 
 Event keys are `purchase`, `generateLead`, `addToCart`, `beginCheckout`, `addPaymentInfo`, `addShippingInfo`, `pageView`, `viewCart`, `viewItem`. Updates replace the event mapping: omitted events are removed. Omitted/blank GA4 `apiSecret` preserves the existing secret on update. LinkedIn accepts one integration per site. No credential is returned by list or write responses.
 
 `--yes` explicitly approves the org-shared impact; scripts must obtain human approval first. Manual configuration does not sign in to the provider or grant OAuth access. Use `integrations link` for browser guidance and complete any provider consent or credential acquisition yourself. A saved configuration and scheduled sync do not establish provider acceptance or event delivery.
+
+### Site settings, alerts and re-send
+
+`crisper settings get --site example.com --json` reads shared site settings and
+whether automatic re-send is available. `crisper alerts get --site example.com
+--json` separates your organization email preferences from shared website silence
+rules. Required service emails are not paused.
+
+Updates read JSON from a hidden prompt or `--input-stdin`, then show the server's
+actual impact preview. Use `--preview` to return it without applying. After explicit approval, rerun identical input with the returned `--confirmation <nonce> --yes`; `--yes` alone never approves a fresh preview. For example:
+
+```sh
+printf '%s' '{"settings":{"currency":"EUR","restricted":true}}' | crisper settings update --site example.com --input-stdin --preview --json
+printf '%s' '{"alerts":{"personal":{"pauseAll":true},"rules":{"eventsHours":48}}}' | crisper alerts update --site example.com --input-stdin --preview --json
+```
+
+The preview returns `data.confirmation` and `data.confirmCommand`. Run that command only after reviewing `data.changes`, re-piping the identical JSON through stdin. Secrets are not stored in the returned command. Expired or changed state/input refuses the old nonce; request and approve a new preview rather than silently renewing it.
+
+Settings fields: `siteType`, `timezone`, `currency`, `restricted`,
+`autoResendEnabled`. A separate `storefrontPassword` may accompany `settings` in
+secure stdin; never put a password in shell arguments/history. Omitted fields
+stay unchanged; blank password clears it. Reads only report password presence.
+Site platform/password changes also affect product feeds. The automatic switch
+is available only in the current rollout; its shared Meta Purchase/Lead age,
+deduplication, rate and circuit-breaker rules still apply.
+
+Alert `personal` fields: `operational`, `daily_digest`, `health_alerts`,
+`setup_help`, `pauseAll`; these apply only to the signed-in user in that org.
+Alert `rules`: `eventsEnabled`, `eventsHours`, `conversionsEnabled`,
+`conversionsHours`, `minimumHourlyEvents`; these are shared for the chosen site.
+Hours are 1–168, minimum hourly events 0–100. No bulk changes or email sends.
+
+For a log from `logs list`, inspect its trace without raw bodies:
+
+```sh
+crisper logs resend-options --site example.com --log <logId> --at <ISO-time> --json
+crisper logs resend --site example.com --log <logId> --at <ISO-time> --integration <id> --outgoing <outgoingLogId> --json
+```
+
+Omit `--outgoing` only for an undelivered Meta/TikTok event; `--collection`
+selects a logged conversion collection when needed. The first call previews the
+prepared send; pass its nonce with `--confirmation <nonce> --yes` and identical selectors after approval. Confirming uses the same Logs sender and reservation. Approval
+expires after ten minutes and binds actor, org, site, request, payload,
+credentials and attempt state. Eight reusable approval slots per org bound
+retention; a later preview may displace an earlier one.
+
+`resend-options` includes safe attempt summaries from the newest 100 site
+attempts; truncation means missing history is unknown. An acceptance is not
+delivery or attribution. Unknown re-send outcomes exit 8, definitive rejection
+exits 6. Inspect Logs before retrying; never blindly repeat an unknown attempt.
+No arbitrary payload/destination, bulk re-send, billing, archive, DNS or GTM
+operation is added by these commands.

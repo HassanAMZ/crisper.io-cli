@@ -20,6 +20,7 @@ import {
   orgsUse,
   requireOrgIdUnlessChoosing,
 } from "./commands/orgs.js";
+import { settingsCommand } from "./commands/settings.js";
 import {
   billingCancel,
   billingLink,
@@ -529,6 +530,103 @@ export function createProgram(deps: ProgramDeps = {}): {
     .action((flags: Window & { by?: string; type?: string }) =>
       run("logs stats", argvForRun, (ctx) => signedIn(logsStats)(ctx, flags)),
     );
+
+  for (const group of ["settings", "alerts"] as const) {
+    const parent = program
+      .command(group)
+      .description(
+        group === "settings"
+          ? "shared website settings"
+          : "personal email preferences and shared site silence rules",
+      );
+    for (const operation of ["get", "update"] as const) {
+      const tool = `${operation}_${group === "settings" ? "site_settings" : "alert_settings"}`;
+      const node = withSite(
+        parent
+          .command(operation)
+          .description(
+            `${operation} ${group}; writes require an impact preview and approval`,
+          ),
+      );
+      if (operation === "update")
+        node
+          .option(
+            "--input-stdin",
+            "change JSON from stdin; otherwise hidden prompt",
+            false,
+          )
+          .option(
+            "--preview",
+            "return impact and confirmation without applying",
+            false,
+          )
+          .option(
+            "--confirmation <nonce>",
+            "nonce from the reviewed preview; resend identical input",
+          )
+          .option("--yes", "approve only the supplied --confirmation", false)
+          .addHelpText(
+            "after",
+            group === "settings"
+              ? '\nInput: {"settings":{"siteType":"shopify","timezone":"UTC","currency":"USD","restricted":true,"autoResendEnabled":false},"storefrontPassword":"optional secret"}. Omitted values stay unchanged; blank password clears it. Never put passwords in flags.\n'
+              : '\nInput: {"alerts":{"personal":{"health_alerts":true,"daily_digest":false,"setup_help":true,"operational":false,"pauseAll":false},"rules":{"eventsEnabled":true,"eventsHours":24,"conversionsEnabled":true,"conversionsHours":24,"minimumHourlyEvents":0}}}. Hours: 1–168; minimum events/hour: 0–100. Omitted preferences are not written, but inherited defaults can change; read the full preview.\n',
+          );
+      node.action((flags) =>
+        run(`${group} ${operation}`, argvForRun, (ctx) =>
+          signedIn((c, session) => settingsCommand(c, session, flags, tool))(
+            ctx,
+            flags,
+          ),
+        ),
+      );
+    }
+  }
+  for (const operation of ["resend-options", "resend"] as const) {
+    const node = withSite(
+      logs
+        .command(operation)
+        .description(
+          operation === "resend"
+            ? "preview and confirm a shared Logs re-send; acceptance is not delivery"
+            : "inspect a log's outgoing IDs without raw bodies",
+        )
+        .requiredOption("--log <id>", "incoming log ID from logs list")
+        .option("--at <iso>", "that log's ISO time"),
+    );
+    if (operation === "resend")
+      node
+        .requiredOption("--integration <id>", "attached integration ID")
+        .option(
+          "--outgoing <id>",
+          "outgoing ID from resend-options; omit for Meta/TikTok undelivered path",
+        )
+        .option(
+          "--collection <name>",
+          "specific conversion collection from the logged event",
+        )
+        .option(
+          "--preview",
+          "return impact and confirmation without sending",
+          false,
+        )
+        .option(
+          "--confirmation <nonce>",
+          "nonce from the reviewed preview; retain identical selectors",
+        )
+        .option("--yes", "approve only the supplied --confirmation", false);
+    node.action((flags) =>
+      run(`logs ${operation}`, argvForRun, (ctx) =>
+        signedIn((c, session) =>
+          settingsCommand(
+            c,
+            session,
+            flags,
+            operation === "resend" ? "resend_event" : "get_resend_options",
+          ),
+        )(ctx, flags),
+      ),
+    );
+  }
 
   const integrations = program
     .command("integrations")

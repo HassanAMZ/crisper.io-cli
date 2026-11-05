@@ -76,7 +76,9 @@ describe("suggestions while typing", () => {
   it("draws at most six rows, the chosen one marked, cut to the width", () => {
     const lines = suggestionLines({ ...fresh, text: "s" }, all, 60);
     expect(lines.filter((l) => l.startsWith("❯"))).toHaveLength(1);
-    const rows = lines.filter((l) => /^[❯ ] \S/.test(l) && !l.includes("↑/↓"));
+    const rows = lines.filter(
+      (l) => /^[❯ ] \S/.test(l) && !l.includes("↑/↓") && !l.includes("more"),
+    );
     expect(rows.length).toBeGreaterThan(0);
     expect(rows.length).toBeLessThanOrEqual(6);
     // A long list says how many more there are.
