@@ -26,6 +26,7 @@ npx crisperio --json orgs list   # one JSON object on stdout, progress on stderr
 
 ## For AI agents
 
+Version 0.0.9 makes `logs export` write its temporary file under a random name it creates itself, so it never writes through a file someone else placed there.
 Version 0.0.8 pulls your data: `logs list` (requests in a date range, with filters and a cursor), `logs export` (to an NDJSON or CSV file, up to `--max-pages` pages of 100; `--cursor` resumes) and `logs stats` (purchases and leads counted and summed per day, source and more).
 Version 0.0.7 gave every Crisper MCP tool a command (`orgs create`,
 `install guide`, `integrations link` are new), lists each command's MCP tools
