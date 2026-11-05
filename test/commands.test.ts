@@ -2178,10 +2178,10 @@ describe("0.0.7: parity commands, one MCP session, clearer errors", () => {
     expect(h.json()).toMatchObject({
       command: "version",
       ok: true,
-      data: { version: "0.0.11" },
+      data: { version: "0.0.12" },
     });
     expect(await h.run("--version")).toBe(0);
-    expect(h.out).toEqual(["0.0.11"]);
+    expect(h.out).toEqual(["0.0.12"]);
   });
 
   it("billing cancel shows the period end as a UTC minute, not raw ISO", async () => {
@@ -2403,7 +2403,30 @@ describe("0.0.7 council round 1", () => {
       result: { sourceStatus: "found", note: "Source only" },
     });
     const S = ["--site", "clinic.com"];
+    for (const tool of [
+      "update_site_settings",
+      "update_alert_settings",
+      "resend_event",
+    ])
+      h.tools[tool] = () => ({
+        result: { ...site, status: "updated", note: "saved" },
+      });
     const argv: Record<string, string[]> = {
+      "settings get": ["settings", "get", ...S],
+      "settings update": ["settings", "update", ...S, "--yes"],
+      "alerts get": ["alerts", "get", ...S],
+      "alerts update": ["alerts", "update", ...S, "--yes"],
+      "logs resend-options": ["logs", "resend-options", ...S, "--log", "l1"],
+      "logs resend": [
+        "logs",
+        "resend",
+        ...S,
+        "--log",
+        "l1",
+        "--integration",
+        "i1",
+        "--yes",
+      ],
       "orgs list": ["orgs", "list"],
       "orgs use": ["orgs", "use", "org_0000000001"],
       "orgs create": ["orgs", "create", "Acme", "--yes"],
@@ -2469,6 +2492,14 @@ describe("0.0.7 council round 1", () => {
     );
     expect(remote.map(([c]) => c).sort()).toEqual(Object.keys(argv).sort());
     for (const [command, tools] of remote) {
+      if (command === "settings update")
+        h.setSecret(JSON.stringify({ settings: { currency: "EUR" } }));
+      if (command === "alerts update")
+        h.setSecret(
+          JSON.stringify({ alerts: { personal: { pauseAll: true } } }),
+        );
+      if (command === "integrations update")
+        h.setSecret(JSON.stringify({ measurementId: "G-FIXTURE" }));
       expect(await h.run("--json", ...argv[command]!), command).toBe(0);
       expect(h.calls.at(-1)?.name, command).toBe(tools[0]);
     }
@@ -3084,5 +3115,206 @@ describe("0.0.8: logs list, export and stats", () => {
         (n) => n.endsWith(".tmp") && !n.includes(String(process.pid)),
       ),
     ).toEqual([]);
+  });
+});
+
+describe("slice 3 confirmed settings and Logs re-send", () => {
+  let h: ReturnType<typeof harness>;
+  beforeEach(async () => {
+    h = harness();
+    await h.init();
+    h.tools.get_connection = () => ({
+      result: { connected: true, organizations: [ORG], instructions: "" },
+    });
+    h.tools.list_sites = () => ({
+      result: { orgId: ORG.orgId, sites: [SITES[0]], truncated: false },
+    });
+  });
+  it("reads secret input for a server preview without approving a write", async () => {
+    h.setStdin('{"settings":{},"storefrontPassword":"PASSWORD_CANARY"}');
+    h.tools.update_site_settings = () => ({
+      result: {
+        status: "confirmation_required",
+        confirmation: "nonce-A",
+        changes: { storefrontPassword: "replaced" },
+        note: "Shared impact",
+      },
+    });
+    expect(await h.run("settings", "update", "--input-stdin", "--json")).toBe(
+      2,
+    );
+    expect(h.stdinReads()).toBe(1);
+    expect(
+      h.calls.filter((c) => c.name === "update_site_settings"),
+    ).toHaveLength(1);
+    expect(h.json().data.confirmation).toBe("nonce-A");
+    expect(h.json().data.confirmCommand).toContain(
+      "--confirmation nonce-A --yes",
+    );
+    expect([...h.out, ...h.err].join("\n")).not.toContain("PASSWORD_CANARY");
+  });
+  it("replays exact settings with server nonce and displays secret-free impact", async () => {
+    h.setStdin(
+      '{"settings":{"currency":"EUR"},"storefrontPassword":"PASSWORD_CANARY"}',
+    );
+    h.tools.update_site_settings = (args) => ({
+      result: args.confirmation
+        ? { status: "updated", settings: { currency: "EUR" }, note: "saved" }
+        : {
+            status: "confirmation_required",
+            confirmation: "nonce",
+            changes: {
+              currency: { before: "USD", after: "EUR" },
+              storefrontPassword: "replaced",
+            },
+            note: "Shared site and product feed change",
+          },
+    });
+    expect(
+      await h.run("settings", "update", "--input-stdin", "--preview", "--json"),
+    ).toBe(0);
+    expect(h.json().data.confirmation).toBe("nonce");
+    const previewInput = h.calls.find(
+      (c) => c.name === "update_site_settings",
+    )!.args;
+    expect(h.err.join("\n")).toContain("Shared site and product feed change");
+    expect(
+      await h.run(
+        "settings",
+        "update",
+        "--input-stdin",
+        "--confirmation",
+        "nonce",
+        "--yes",
+        "--json",
+      ),
+    ).toBe(0);
+    const calls = h.calls.filter((c) => c.name === "update_site_settings");
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.args).toEqual({
+      ...previewInput,
+      confirmation: "nonce",
+    });
+    expect([...h.out, ...h.err].join("\n")).not.toContain("PASSWORD_CANARY");
+  });
+  it("re-send without approval returns actual impact but never confirms", async () => {
+    h.tools.resend_event = () => ({
+      result: {
+        status: "confirmation_required",
+        confirmation: "nonce",
+        changes: { integrationId: "i1", event: "Purchase" },
+        note: "May send a conversion",
+      },
+    });
+    expect(
+      await h.run(
+        "logs",
+        "resend",
+        "--log",
+        "l1",
+        "--integration",
+        "i1",
+        "--json",
+      ),
+    ).toBe(2);
+    expect(h.calls.filter((c) => c.name === "resend_event")).toHaveLength(1);
+    expect(JSON.stringify(h.json().data)).toContain("Purchase");
+  });
+  it("unknown confirmed re-send exits unconfirmed and retains evidence", async () => {
+    h.tools.resend_event = (args) => ({
+      result: args.confirmation
+        ? { status: "unknown", note: "Inspect Logs" }
+        : {
+            status: "confirmation_required",
+            confirmation: "nonce",
+            changes: { integrationId: "i1" },
+            note: "May send",
+          },
+    });
+    expect(
+      await h.run(
+        "logs",
+        "resend",
+        "--log",
+        "l1",
+        "--integration",
+        "i1",
+        "--confirmation",
+        "nonce",
+        "--yes",
+        "--json",
+      ),
+    ).toBe(8);
+    expect(h.json().data.status).toBe("unknown");
+    expect(h.calls.filter((c) => c.name === "resend_event")).toHaveLength(1);
+  });
+  it.each(["settings", "alerts", "resend"])(
+    "%s stale reviewed nonce is refused without getting a fresh approval",
+    async (kind) => {
+      const tool =
+        kind === "resend"
+          ? "resend_event"
+          : kind === "settings"
+            ? "update_site_settings"
+            : "update_alert_settings";
+      const args =
+        kind === "resend"
+          ? ["logs", "resend", "--log", "l1", "--integration", "i1"]
+          : [kind, "update", "--input-stdin"];
+      h.setStdin(
+        JSON.stringify(
+          kind === "settings"
+            ? { settings: { currency: "EUR" } }
+            : { alerts: { personal: { pauseAll: true } } },
+        ),
+      );
+      let changed = false;
+      h.tools[tool] = (input) =>
+        input.confirmation
+          ? changed
+            ? {
+                error: "This confirmation is unavailable or expired.",
+                code: "invalid_argument",
+              }
+            : { result: { status: "updated" } }
+          : {
+              result: {
+                status: "confirmation_required",
+                confirmation: changed ? "nonce-B" : "nonce-A",
+                changes: { impact: changed ? "changed" : "reviewed" },
+                note: "Review",
+              },
+            };
+      expect(await h.run(...args, "--yes", "--json")).toBe(2);
+      expect(h.json().data.confirmation).toBe("nonce-A");
+      expect(h.json().data.confirmCommand).toContain("--confirmation nonce-A");
+      const previewInput = h.calls.find((c) => c.name === tool)!.args;
+      changed = true;
+      expect(
+        await h.run(...args, "--confirmation", "nonce-A", "--yes", "--json"),
+      ).toBe(2);
+      const calls = h.calls.filter((c) => c.name === tool);
+      expect(calls).toHaveLength(1);
+      expect(calls[0]!.args).toEqual({
+        ...previewInput,
+        confirmation: "nonce-A",
+      });
+    },
+  );
+  it("requires explicit approval before submitting a supplied nonce", async () => {
+    expect(
+      await h.run(
+        "logs",
+        "resend",
+        "--log",
+        "l1",
+        "--integration",
+        "i1",
+        "--confirmation",
+        "nonce",
+        "--json",
+      ),
+    ).toBe(2);
+    expect(h.calls.some((c) => c.name === "resend_event")).toBe(false);
   });
 });

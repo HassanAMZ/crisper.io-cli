@@ -5,6 +5,9 @@ import { COMMAND_TOOLS } from "./tool-map.js";
 import { VERSION } from "./version.js";
 
 export const ACCOUNT_CHANGES = [
+  "settings update",
+  "alerts update",
+  "logs resend",
   "orgs create",
   "sites add",
   "billing cancel",
@@ -13,6 +16,18 @@ export const ACCOUNT_CHANGES = [
 ] as const;
 
 export const EXAMPLES: Record<string, string[]> = {
+  "settings get": ["crisper settings get --site example.com --json"],
+  "settings update": [
+    "crisper settings update --site example.com --input-stdin --yes",
+  ],
+  "alerts get": ["crisper alerts get --site example.com --json"],
+  "alerts update": [
+    "crisper alerts update --site example.com --input-stdin --yes",
+  ],
+  "logs resend-options": [
+    "crisper logs resend-options --log <id> --at 2026-11-05T00:00:00Z --json",
+  ],
+  "logs resend": ["crisper logs resend --log <id> --integration <id> --json"],
   login: ["crisper login", "crisper login --no-browser"],
   logout: ["crisper logout"],
   "auth status": ["crisper auth status --json"],
