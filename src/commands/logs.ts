@@ -1,4 +1,5 @@
-import { link, rename, stat, unlink, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { link, open, rename, stat, unlink } from "node:fs/promises";
 import { resolve } from "node:path";
 
 import { type Session } from "../auth/session.js";
@@ -305,8 +306,32 @@ export async function logsExport(
         ].join("\n") + "\n";
   // Written whole, then put in place, so a reader never sees half a file.
   // Without --force a file that appeared meanwhile is kept (link fails on it).
-  const temp = `${file}.${process.pid}.tmp`;
-  await writeFile(temp, body, { mode: 0o600 });
+  // The temporary name is random and created exclusively ("wx"), so it never
+  // follows or reuses anything already there, such as another user's symlink.
+  let temp = "";
+  for (let attempt = 1; ; attempt++) {
+    const name = `${file}.${randomUUID()}.tmp`;
+    let handle: Awaited<ReturnType<typeof open>>;
+    try {
+      handle = await open(name, "wx", 0o600);
+    } catch (error) {
+      // Something is already there: not ours, never touched. Try a new name.
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST" || attempt >= 3)
+        throw error;
+      continue;
+    }
+    // Ours from here: a failed write (a full disk) removes it.
+    try {
+      await handle.writeFile(body);
+    } catch (error) {
+      await handle.close().catch(() => {});
+      await unlink(name).catch(() => {});
+      throw error;
+    }
+    await handle.close();
+    temp = name;
+    break;
+  }
   try {
     if (flags.force) await rename(temp, file);
     else await link(temp, file);

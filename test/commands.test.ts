@@ -1,4 +1,4 @@
-import { writeFileSync } from "node:fs";
+import { symlinkSync, writeFileSync } from "node:fs";
 import { mkdtemp, readFile, readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -1944,10 +1944,10 @@ describe("0.0.7: parity commands, one MCP session, clearer errors", () => {
     expect(h.json()).toMatchObject({
       command: "version",
       ok: true,
-      data: { version: "0.0.8" },
+      data: { version: "0.0.9" },
     });
     expect(await h.run("--version")).toBe(0);
-    expect(h.out).toEqual(["0.0.8"]);
+    expect(h.out).toEqual(["0.0.9"]);
   });
 
   it("billing cancel shows the period end as a UTC minute, not raw ISO", async () => {
@@ -2780,5 +2780,44 @@ describe("0.0.8: logs list, export and stats", () => {
     });
     expect(env.error.next).toContain("--cursor 1");
     expect((await readFile(file, "utf8")).trim().split("\n")).toHaveLength(1);
+  });
+
+  it("logs export never writes through a file planted at a predictable temporary name", async () => {
+    h.tools.list_events = () => ({
+      result: {
+        ...site,
+        events: [event(1)],
+        nextCursor: null,
+        partial: false,
+        window: { from: "a", to: "b" },
+      },
+    });
+    const dir = await mkdtemp(join(tmpdir(), "crisperio-export-"));
+    const file = join(dir, "out.ndjson");
+    // Someone else's file, and a link to it where the old name pattern put the temp file.
+    const victim = join(dir, "victim.txt");
+    writeFileSync(victim, "keep me\n");
+    symlinkSync(victim, `${file}.${process.pid}.tmp`);
+    expect(
+      await h.run(
+        "--json",
+        "logs",
+        "export",
+        "--site",
+        "clinic.com",
+        "--since",
+        "7d",
+        "--output",
+        file,
+      ),
+    ).toBe(0);
+    expect(await readFile(victim, "utf8")).toBe("keep me\n");
+    expect(JSON.parse((await readFile(file, "utf8")).trim()).logId).toBe("l1");
+    // No temporary file of ours is left behind.
+    expect(
+      (await readdir(dir)).filter(
+        (n) => n.endsWith(".tmp") && !n.includes(String(process.pid)),
+      ),
+    ).toEqual([]);
   });
 });
