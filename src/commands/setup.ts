@@ -71,17 +71,22 @@ function dnsHuman(d: Record<string, unknown>) {
     lines.push(
       "",
       table([
-        ["TYPE", "HOST", "VALUE"],
+        ["TYPE", "HOST", "VALUE", "RECORD STATUS"],
         ...records.map((r) => [
           str(r.type) ?? "",
           str(r.host) ?? "",
           str(r.value) ?? "",
+          str(r.status) ?? "unknown (provider did not report)",
         ]),
       ]),
       "",
       d.state === "verified"
-        ? "These records are in place and verified."
+        ? "Saved tracking-domain state is verified. This does not independently verify each record."
         : "Add these at your DNS provider exactly as shown, then run `crisper dns check`.",
+      safeText(
+        d.recordStatusNote ??
+          "Per-record status is unknown unless supplied by the provider.",
+      ),
     );
   return lines.join("\n");
 }
@@ -146,6 +151,34 @@ export async function dnsCheck(
 }
 
 // ---- Install snippet ------------------------------------------------------
+
+/** Source-only evidence, never a claim that JavaScript ran or a provider received it. */
+export async function installCheck(
+  ctx: CommandContext,
+  session: Session,
+  flags: TargetFlags,
+) {
+  const { d, data } = await siteCall(ctx, session, flags, "check_install");
+  if (d.sourceStatus !== "found")
+    throw withData(
+      new CliError(
+        "EVIDENCE_INCOMPLETE",
+        d.sourceStatus === "not_found"
+          ? "Loader address not found in fetched homepage source; runtime installation is unknown."
+          : "Homepage source evidence is unavailable.",
+        {
+          exit: EXIT.unavailable,
+          next: "Check installation with crisper install snippet; send a test event and use crisper events verify for receipt evidence.",
+        },
+      ),
+      data,
+    );
+  return {
+    data,
+    human: () =>
+      `Loader address found in fetched homepage source.\n${safeText(d.note)}`,
+  };
+}
 
 export async function installSnippet(
   ctx: CommandContext,

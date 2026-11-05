@@ -117,6 +117,9 @@ export async function logsList(
                 "SOURCE",
                 "VALUE",
                 "VISITOR",
+                "EMAIL (MASKED)",
+                "PHONE (MASKED)",
+                "IP (MASKED)",
               ],
               ...events.map((e) => [
                 str(e.time) ?? "",
@@ -126,6 +129,9 @@ export async function logsList(
                 [str(e.source), str(e.medium)].filter(Boolean).join(" / "),
                 money(e),
                 str(e.visitor) ?? "",
+                str(rec(e.contact).email) ?? "",
+                str(rec(e.contact).phone) ?? "",
+                str(rec(e.contact).ip) ?? "",
               ]),
             ])
           : `No requests on ${safeText(site.domain)} in this window.`,
@@ -158,6 +164,9 @@ const CSV_COLUMNS = [
   "currency",
   "visitor",
   "logId",
+  "emailMasked",
+  "phoneMasked",
+  "ipMasked",
 ] as const;
 
 /** Quote every cell; a cell a spreadsheet would run as a formula starts with '. */
@@ -302,7 +311,13 @@ export async function logsExport(
         (rows.length ? "\n" : "")
       : [
           CSV_COLUMNS.join(","),
-          ...rows.map((r) => CSV_COLUMNS.map((c) => csvCell(r[c])).join(",")),
+          ...rows.map((r) =>
+            CSV_COLUMNS.map((c) =>
+              csvCell(
+                c.endsWith("Masked") ? rec(r.contact)[c.slice(0, -6)] : r[c],
+              ),
+            ).join(","),
+          ),
         ].join("\n") + "\n";
   // Written whole, then put in place, so a reader never sees half a file.
   // Without --force a file that appeared meanwhile is kept (link fails on it).

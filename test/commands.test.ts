@@ -266,6 +266,25 @@ describe("site commands", () => {
     });
   });
 
+  it("install check preserves source-only evidence and unknown exits", async () => {
+    for (const status of ["found", "not_found", "unknown"]) {
+      h.tools.check_install = () => ({
+        result: {
+          sourceStatus: status,
+          runtimeVerified: false,
+          providerDeliveryVerified: false,
+          note: "Fetched source only",
+        },
+      });
+      expect(
+        await h.run("--json", "install", "check", "--site", "clinic.com"),
+      ).toBe(status === "found" ? 0 : 7);
+      expect(h.json().data.sourceStatus).toBe(status);
+      expect(h.json().data.runtimeVerified).toBe(false);
+      expect(h.calls.at(-1)?.name).toBe("check_install");
+    }
+  });
+
   it("lists sites of the only organization", async () => {
     expect(await h.run("--json", "sites", "list")).toBe(0);
     const env = h.json();
@@ -530,6 +549,27 @@ describe("dns, events, integrations and billing", () => {
     expect(h.json().data.records[0].type).toBe("CNAME");
     h.tools.check_dns = () => dns("verified");
     expect(await h.run("--json", "dns", "check")).toBe(0);
+  });
+
+  it("does not infer per-record verification from saved domain state", async () => {
+    h.tools.get_dns_records = () => ({
+      result: {
+        ...site,
+        trackingDomain: "t.clinic.com",
+        state: "verified",
+        records: [
+          { type: "CNAME", host: "t", value: "x.stape.io", status: null },
+        ],
+        recordStatusNote:
+          "Per-record status is supplied by the provider; null means unknown.",
+      },
+    });
+    expect(await h.run("dns", "records")).toBe(0);
+    const output = h.out.join("\n");
+    expect(output).toContain("unknown (provider did not report)");
+    expect(output).toContain("Saved tracking-domain state is verified");
+    expect(output).toContain("null means unknown");
+    expect(output).not.toContain("These records are in place and verified");
   });
 
   it("events verify waits, asking again each minute, then succeeds", async () => {
@@ -1944,10 +1984,10 @@ describe("0.0.7: parity commands, one MCP session, clearer errors", () => {
     expect(h.json()).toMatchObject({
       command: "version",
       ok: true,
-      data: { version: "0.0.9" },
+      data: { version: "0.0.10" },
     });
     expect(await h.run("--version")).toBe(0);
-    expect(h.out).toEqual(["0.0.9"]);
+    expect(h.out).toEqual(["0.0.10"]);
   });
 
   it("billing cancel shows the period end as a UTC minute, not raw ISO", async () => {
@@ -2156,6 +2196,9 @@ describe("0.0.7 council round 1", () => {
       },
     });
     h.setStdin("dummy-platform-token-for-test");
+    h.tools.check_install = () => ({
+      result: { sourceStatus: "found", note: "Source only" },
+    });
     const S = ["--site", "clinic.com"];
     const argv: Record<string, string[]> = {
       "orgs list": ["orgs", "list"],
@@ -2178,6 +2221,7 @@ describe("0.0.7 council round 1", () => {
       "billing cancel": ["billing", "cancel", ...S, "--yes"],
       "dns records": ["dns", "records", ...S],
       "dns check": ["dns", "check", ...S],
+      "install check": ["install", "check", ...S],
       "install snippet": ["install", "snippet", ...S],
       "install guide": ["install", "guide", ...S],
       "events list": ["events", "list", ...S],
@@ -2323,7 +2367,16 @@ describe("0.0.8: logs list, export and stats", () => {
   it("logs export follows every page, waits out a rate limit, and writes safe CSV", async () => {
     const pages: Record<string, { events: unknown[]; next: string | null }> = {
       "": {
-        events: [event(1), event(2, { source: "=HYPERLINK(1)" })],
+        events: [
+          event(1, {
+            contact: {
+              email: "j***@gmail.com",
+              phone: "•••• 1234",
+              ip: "203.*.*.*",
+            },
+          }),
+          event(2, { source: "=HYPERLINK(1)" }),
+        ],
         next: "p2",
       },
       p2: { events: [event(3)], next: "p3" },
@@ -2382,9 +2435,10 @@ describe("0.0.8: logs list, export and stats", () => {
     });
     const csv = (await readFile(file, "utf8")).trim().split("\n");
     expect(csv[0]).toBe(
-      "time,event,client,status,path,source,medium,value,currency,visitor,logId",
+      "time,event,client,status,path,source,medium,value,currency,visitor,logId,emailMasked,phoneMasked,ipMasked",
     );
     expect(csv).toHaveLength(5);
+    expect(csv[1]).toContain('"j***@gmail.com","•••• 1234","203.*.*.*"');
     expect(csv[2]).toContain(`"'=HYPERLINK(1)"`);
     expect(
       h.calls.filter((c) => c.name === "list_events").map((c) => c.args.limit),

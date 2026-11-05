@@ -27,6 +27,7 @@ export const EXAMPLES: Record<string, string[]> = {
   "billing link": ["crisper billing link --site example.com --json"],
   "billing cancel": ["crisper billing cancel --site example.com --json"],
   "dns records": ["crisper dns records --site example.com --json"],
+  "install check": ["crisper install check --site example.com --json"],
   "dns check": ["crisper dns check --site example.com --json"],
   "install snippet": ["crisper install snippet --site example.com --json"],
   "install guide": ["crisper install guide --site example.com --json"],

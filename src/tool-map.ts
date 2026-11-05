@@ -31,6 +31,7 @@ export const COMMAND_TOOLS: Record<string, readonly string[]> = {
   "billing cancel": ["cancel_billing"],
   "dns records": ["get_dns_records"],
   "dns check": ["check_dns"],
+  "install check": ["check_install"],
   "install snippet": ["get_install_snippet"],
   "install guide": ["get_installation_guide"],
   "events list": ["list_recent_events"],

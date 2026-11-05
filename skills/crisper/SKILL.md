@@ -35,6 +35,8 @@ Use the returned next step and repeat status after completing each step:
    `crisper dns check --site example.com --json` after adding the records.
 4. `crisper install snippet --site example.com --json` — follow the platform's
    installation instructions; generating a script does not prove installation.
+   `crisper install check --site example.com --json` checks fetched homepage source
+   only (exit 7 if absent/unknown); a match does not prove runtime or provider tracking.
 5. `crisper integrations connect --site example.com --platform meta --pixel 1234567890 --json`
 6. Send a test purchase, then
    `crisper events verify --site example.com --type purchase --wait 5 --json`.
@@ -46,7 +48,9 @@ counts purchases and leads; `crisper logs list --since 24h --json` pages request
 --output logs.ndjson --json` writes them to a file, up to `--max-pages` pages of 100. For export, `data.complete` false means it stopped early: resume with
 `--cursor` set to `data.nextCursor` and a new `--output`. `data.partial` true
 means Stape skipped rows in a busy stretch. For stats, `data.coverage.complete`
-false means counts are a minimum.
+false means counts are a minimum. Logs expose masked contacts only: email first
+letter + *** + domain, phone last four digits, IP first block. Missing/malformed
+or hashed contacts are null; there is no raw-contact option.
 
 If the site does not exist, propose it with
 `crisper sites add example.com --type shopify --json` first; with no
