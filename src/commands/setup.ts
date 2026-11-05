@@ -9,6 +9,15 @@ import { type TargetFlags, resolveSite } from "./target.js";
 const rec = (v: unknown) =>
   v && typeof v === "object" ? (v as Record<string, unknown>) : {};
 const str = (v: unknown) => (typeof v === "string" ? v : null);
+/** An ISO time from the server as `2026-11-05 21:08 UTC`; anything else (a plain date) as sent. */
+export const utcMinute = (v: unknown) => {
+  const s = str(v);
+  if (s === null || !s.includes("T")) return s;
+  const t = Date.parse(s);
+  return Number.isFinite(t)
+    ? `${new Date(t).toISOString().slice(0, 16).replace("T", " ")} UTC`
+    : s;
+};
 /** `trial_ending` → `trial ending`; other statuses print as sent. */
 export const humanStatus = (v: unknown) => str(v)?.replace(/_/g, " ") ?? null;
 
@@ -31,6 +40,10 @@ async function siteCall(
   );
   return { orgId, site, d: rec(data), data };
 }
+
+/** `--org … --site …` for a suggested command, so it acts on the same website whatever is saved. */
+const targetArgs = (orgId: string, domain: string) =>
+  `--org ${shellArg(orgId)} --site ${shellArg(domain)}`;
 
 /** A failure that still carries what the server said, for the JSON envelope. */
 function withData(error: CliError, data: unknown) {
@@ -191,6 +204,47 @@ export async function installSnippet(
       );
       return lines.join("\n");
     },
+  };
+}
+
+/** A dashboard link from the server, opened only on request, at a terminal, on Crisper's own origin. */
+async function openIfAsked(
+  ctx: CommandContext,
+  url: string | null,
+  open: boolean,
+) {
+  if (!open || !url || !ctx.interactive || !url.startsWith("https://")) return;
+  try {
+    if (new URL(url).origin !== new URL(ctx.config.origin).origin) return;
+  } catch {
+    return;
+  }
+  await ctx.openBrowser(url).catch(() => {});
+}
+
+/** The dashboard's platform installation page; `install snippet` prints the script itself. */
+export async function installGuide(
+  ctx: CommandContext,
+  session: Session,
+  flags: TargetFlags & { open: boolean },
+) {
+  const { orgId, site, d, data } = await siteCall(
+    ctx,
+    session,
+    flags,
+    "get_installation_guide",
+  );
+  const url = str(d.url);
+  await openIfAsked(ctx, url, flags.open);
+  return {
+    data,
+    human: () =>
+      [
+        `Installation page for ${safeText(site.domain)} (${safeText(d.siteType ?? "")}):`,
+        safeText(url ?? ""),
+        "",
+        `For the script itself: crisper install snippet ${targetArgs(orgId, site.domain)}`,
+      ].join("\n"),
   };
 }
 
@@ -483,6 +537,36 @@ export async function integrationsList(
 }
 
 /**
+ * The dashboard page to connect any platform (GA4, Google Ads and others);
+ * Meta and TikTok can also use `integrations connect`. Opens nothing by itself.
+ */
+export async function integrationsLink(
+  ctx: CommandContext,
+  session: Session,
+  flags: TargetFlags & { open: boolean },
+) {
+  const { orgId, site, d, data } = await siteCall(
+    ctx,
+    session,
+    flags,
+    "get_integration_setup_link",
+  );
+  const url = str(d.url);
+  await openIfAsked(ctx, url, flags.open);
+  return {
+    data,
+    human: () =>
+      [
+        `Open this to connect a platform to ${safeText(site.domain)}:`,
+        safeText(url ?? ""),
+        "",
+        `Meta or TikTok can be connected here instead: crisper integrations connect ${targetArgs(orgId, site.domain)} --platform meta --pixel <id>`,
+        `Then run \`crisper integrations list ${targetArgs(orgId, site.domain)}\`.`,
+      ].join("\n"),
+  };
+}
+
+/**
  * Connect Meta or TikTok. The access token is read from a hidden prompt, or
  * from standard input with --token-stdin; there is no flag for it.
  */
@@ -604,24 +688,7 @@ export async function billingLink(
     "get_billing_link",
   );
   const url = str(d.url);
-  const sameSite = (() => {
-    try {
-      return (
-        url !== null &&
-        new URL(url).origin === new URL(ctx.config.origin).origin
-      );
-    } catch {
-      return false;
-    }
-  })();
-  if (
-    flags.open &&
-    url &&
-    ctx.interactive &&
-    sameSite &&
-    url.startsWith("https://")
-  )
-    await ctx.openBrowser(url).catch(() => {});
+  await openIfAsked(ctx, url, flags.open);
   return {
     data,
     human: () =>
@@ -646,7 +713,7 @@ export async function billingCancel(
     return {
       data: first.data,
       human: () =>
-        `Billing for ${safeText(first.site.domain)} already ends on ${safeText(first.d.currentPeriodEnd ?? "the period end")}.`,
+        `Billing for ${safeText(first.site.domain)} already ends on ${safeText(utcMinute(first.d.currentPeriodEnd) ?? "the period end")}.`,
     };
   const confirmation = str(first.d.confirmation);
   if (first.d.status !== "confirmation_required" || !confirmation)
@@ -662,7 +729,7 @@ export async function billingCancel(
       first.data,
     );
   const changes = [
-    `Cancel billing for ${safeText(first.site.domain)}${first.d.plan ? ` (${safeText(first.d.plan)})` : ""}. Tracking continues until ${safeText(first.d.currentPeriodEnd ?? "the end of the period")}, then stops.`,
+    `Cancel billing for ${safeText(first.site.domain)}${first.d.plan ? ` (${safeText(first.d.plan)})` : ""}. Tracking continues until ${safeText(utcMinute(first.d.currentPeriodEnd) ?? "the end of the period")}, then stops.`,
   ];
   ctx.writer.err(changes.join("\n"));
   await confirm(
@@ -699,6 +766,6 @@ export async function billingCancel(
   return {
     data,
     human: () =>
-      `Billing for ${safeText(first.site.domain)} ends on ${safeText(d.currentPeriodEnd ?? "the period end")}. Tracking continues until then.`,
+      `Billing for ${safeText(first.site.domain)} ends on ${safeText(utcMinute(d.currentPeriodEnd) ?? "the period end")}. Tracking continues until then.`,
   };
 }

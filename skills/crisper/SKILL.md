@@ -41,12 +41,15 @@ Use the returned next step and repeat status after completing each step:
    This proves Crisper received the event, not platform acceptance.
 
 If the site does not exist, propose it with
-`crisper sites add example.com --type shopify --json` first.
+`crisper sites add example.com --type shopify --json` first; with no
+organization yet, `crisper orgs create "Business name" --json` comes before it.
+For platforms other than Meta and TikTok, `crisper integrations link --json`
+returns the dashboard page where the human connects them.
 Replace the example domain and pixel ID with the human's actual target.
 
 ## Changes need human approval
 
-`sites add`, `billing cancel`, and `integrations connect` return
+`orgs create`, `sites add`, `billing cancel`, and `integrations connect` return
 `CONFIRMATION_REQUIRED` (exit 2) without making the change when `--yes` is absent.
 The envelope's `data.changes` explains the effects; `data.confirmCommand` is the
 original invocation with `--yes` added. Show the changes to the human. Only run

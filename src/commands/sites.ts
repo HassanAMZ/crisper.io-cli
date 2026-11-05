@@ -4,8 +4,8 @@ import { callTool } from "../mcp/client.js";
 import { safeText, shellArg, table } from "../output.js";
 import { confirm } from "../prompt.js";
 import { type CommandContext } from "./context.js";
-import { humanStatus } from "./setup.js";
 import { canChoose } from "./orgs.js";
+import { humanStatus } from "./setup.js";
 import {
   type TargetFlags,
   chooseSite,
@@ -372,6 +372,15 @@ export async function sitesAdd(
   // The new site becomes the default only when no --org override was given,
   // so a one-off add for another client doesn't redirect later commands.
   // The site exists either way: a failed config write must not report failure.
+  // created, existing or restored; servers before MCP 1.4.0 send only replay.
+  const outcome =
+    d.outcome === "created" ||
+    d.outcome === "existing" ||
+    d.outcome === "restored"
+      ? d.outcome
+      : d.replay === true
+        ? "existing"
+        : "created";
   let remembered = !flags.org;
   if (remembered)
     await session
@@ -390,6 +399,7 @@ export async function sitesAdd(
       domain: str(d.domain) ?? domain,
       settings,
       replay: d.replay === true,
+      outcome,
       defaultChanged: remembered,
       next: {
         step: "billing",
@@ -399,9 +409,11 @@ export async function sitesAdd(
     context: { orgId, siteId: websiteId },
     human: () =>
       [
-        d.replay === true
+        outcome === "existing"
           ? `${safeText(domain)} was already in this organization.`
-          : `Added ${safeText(domain)}.`,
+          : outcome === "restored"
+            ? `Restored ${safeText(domain)}, which had been archived in this organization.`
+            : `Added ${safeText(domain)}.`,
         ...(remembered ? [`Later commands now use ${safeText(domain)}.`] : []),
         "",
         "Next: start billing. Crisper creates the tracking domain once billing is active.",

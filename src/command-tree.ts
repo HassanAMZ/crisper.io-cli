@@ -1,8 +1,11 @@
 import { type Command, type Option } from "commander";
 
 import { ERROR_CODES, EXIT } from "./errors.js";
+import { COMMAND_TOOLS } from "./tool-map.js";
+import { VERSION } from "./version.js";
 
 export const ACCOUNT_CHANGES = [
+  "orgs create",
   "sites add",
   "billing cancel",
   "integrations connect",
@@ -14,6 +17,7 @@ export const EXAMPLES: Record<string, string[]> = {
   "auth status": ["crisper auth status --json"],
   "orgs list": ["crisper orgs list --json"],
   "orgs use": ["crisper orgs use", "crisper orgs use org_0123456789 --json"],
+  "orgs create": ['crisper orgs create "Acme Agency" --json'],
   "sites list": ["crisper sites list --json"],
   "sites use": ["crisper sites use", "crisper sites use example.com --json"],
   "sites status": ["crisper sites status --site example.com --json"],
@@ -25,9 +29,11 @@ export const EXAMPLES: Record<string, string[]> = {
   "dns records": ["crisper dns records --site example.com --json"],
   "dns check": ["crisper dns check --site example.com --json"],
   "install snippet": ["crisper install snippet --site example.com --json"],
+  "install guide": ["crisper install guide --site example.com --json"],
   "events list": ["crisper events list --type purchase --limit 10 --json"],
   "events verify": ["crisper events verify --type purchase --wait 5 --json"],
   "integrations list": ["crisper integrations list --site example.com --json"],
+  "integrations link": ["crisper integrations link --site example.com --json"],
   "integrations connect": [
     "crisper integrations connect --site example.com --platform meta --pixel 1234567890 --json",
   ],
@@ -79,6 +85,7 @@ export const EXIT_CODES = Object.fromEntries(
 export function commandCatalog(program: Command) {
   return {
     schemaVersion: 1,
+    version: VERSION,
     commands: leafCommands(program).map(({ command, node }) => ({
       command,
       description: node.description(),
@@ -89,6 +96,8 @@ export function commandCatalog(program: Command) {
       options: node.options.map((option) => optionInfo(option, node)),
       examples: EXAMPLES[command] ?? [],
       changesAccount: (ACCOUNT_CHANGES as readonly string[]).includes(command),
+      // The Crisper MCP tools this command covers; the first is the one it calls.
+      mcpTools: COMMAND_TOOLS[command] ?? [],
     })),
     globalOptions: program.options.map((option) => optionInfo(option, program)),
     exitCodes: EXIT_CODES,
