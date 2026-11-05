@@ -28,6 +28,7 @@ import {
   dnsRecords,
   eventsList,
   eventsVerify,
+  installCheck,
   installGuide,
   installSnippet,
   integrationsConnect,
@@ -390,6 +391,17 @@ export function createProgram(deps: ProgramDeps = {}): {
 
   const install = program.command("install").description("the tracking script");
   withSite(
+    install
+      .command("check")
+      .description(
+        "homepage source evidence only; no runtime or delivery proof (exit 7 if absent/unknown)",
+      ),
+  ).action((flags: Target) =>
+    run("install check", argvForRun, (ctx) =>
+      signedIn(installCheck)(ctx, flags),
+    ),
+  );
+  withSite(
     install.command("snippet").description("the script to add to the website"),
   ).action((flags: Target) =>
     run("install snippet", argvForRun, (ctx) =>
@@ -453,7 +465,9 @@ export function createProgram(deps: ProgramDeps = {}): {
     windowed(
       logs
         .command("list")
-        .description("requests in a time window, newest first (last 10 days)"),
+        .description(
+          "requests in a time window (10 days); contacts masked: j***@gmail.com, •••• 1234, first IP block",
+        ),
       "end (default: now)",
     ),
   )
