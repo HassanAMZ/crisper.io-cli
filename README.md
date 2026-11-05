@@ -26,7 +26,8 @@ npx crisperio --json orgs list   # one JSON object on stdout, progress on stderr
 
 ## For AI agents
 
-Version 0.0.7 gives every Crisper MCP tool a command (`orgs create`,
+Version 0.0.8 pulls your data: `logs list` (requests in a date range, with filters and a cursor), `logs export` (to an NDJSON or CSV file, up to `--max-pages` pages of 100; `--cursor` resumes) and `logs stats` (purchases and leads counted and summed per day, source and more).
+Version 0.0.7 gave every Crisper MCP tool a command (`orgs create`,
 `install guide`, `integrations link` are new), lists each command's MCP tools
 in `crisper commands --json` (`mcpTools`), runs a command's calls over one MCP
 session (about a second faster for site commands), reports the server's retry
@@ -68,23 +69,25 @@ is unconfirmed: check status before retrying.
 
 ## Commands
 
-| Command                                                                          | What it does                                                                                                                  |
-| -------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| `crisper login`                                                                  | Opens your browser; you approve a short code. `--no-browser` prints the link only.                                            |
-| `crisper auth status`                                                            | Who is signed in on this computer, and the saved organization and website.                                                    |
-| `crisper orgs list`, `orgs use [id]`                                             | Organizations this login can use; choose one for later commands (no ID: pick from a list).                                    |
-| `crisper orgs create <name>`                                                     | Create an organization and use it for later commands (reuses yours with the same name; no charge).                            |
-| `crisper sites list`, `sites use [domain]`                                       | Websites in the organization; choose one for later commands (none given: pick from a list).                                   |
-| `crisper sites add <domain> --type <platform>`                                   | Add a website (no charge). Defaults: USD, this computer's timezone, restricted category on.                                   |
-| `crisper sites status`                                                           | Setup progress and the one next step.                                                                                         |
-| `crisper sites health`                                                           | Purchases and leads Crisper received today and this week.                                                                     |
-| `crisper billing link`, `billing status`, `billing cancel`                       | The page to pay, the subscription state, and cancel at the end of the period.                                                 |
-| `crisper dns records`, `dns check`                                               | The tracking domain's DNS records; check them (exit 6 until verified).                                                        |
-| `crisper install snippet`, `install guide`                                       | The tracking script for the website's platform; the dashboard's installation page for it.                                     |
-| `crisper integrations list`, `integrations connect --platform meta --pixel <id>` | Connected platforms; connect Meta or TikTok. The token is asked for at a hidden prompt (or `--token-stdin`), never as a flag. |
-| `crisper integrations link`                                                      | The dashboard page to connect any other platform, such as GA4 or Google Ads.                                                  |
-| `crisper events list`, `events verify --type purchase --wait 5`                  | Recent events; check that a test purchase or lead arrived.                                                                    |
-| `crisper logout`                                                                 | Revokes the sign-in and forgets it.                                                                                           |
+| Command                                                                                  | What it does                                                                                                                                                                                |
+| ---------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `crisper login`                                                                          | Opens your browser; you approve a short code. `--no-browser` prints the link only.                                                                                                          |
+| `crisper auth status`                                                                    | Who is signed in on this computer, and the saved organization and website.                                                                                                                  |
+| `crisper orgs list`, `orgs use [id]`                                                     | Organizations this login can use; choose one for later commands (no ID: pick from a list).                                                                                                  |
+| `crisper orgs create <name>`                                                             | Create an organization and use it for later commands (reuses yours with the same name; no charge).                                                                                          |
+| `crisper sites list`, `sites use [domain]`                                               | Websites in the organization; choose one for later commands (none given: pick from a list).                                                                                                 |
+| `crisper sites add <domain> --type <platform>`                                           | Add a website (no charge). Defaults: USD, this computer's timezone, restricted category on.                                                                                                 |
+| `crisper sites status`                                                                   | Setup progress and the one next step.                                                                                                                                                       |
+| `crisper sites health`                                                                   | Purchases and leads Crisper received today and this week.                                                                                                                                   |
+| `crisper billing link`, `billing status`, `billing cancel`                               | The page to pay, the subscription state, and cancel at the end of the period.                                                                                                               |
+| `crisper dns records`, `dns check`                                                       | The tracking domain's DNS records; check them (exit 6 until verified).                                                                                                                      |
+| `crisper install snippet`, `install guide`                                               | The tracking script for the website's platform; the dashboard's installation page for it.                                                                                                   |
+| `crisper integrations list`, `integrations connect --platform meta --pixel <id>`         | Connected platforms; connect Meta or TikTok. The token is asked for at a hidden prompt (or `--token-stdin`), never as a flag.                                                               |
+| `crisper integrations link`                                                              | The dashboard page to connect any other platform, such as GA4 or Google Ads.                                                                                                                |
+| `crisper events list`, `events verify --type purchase --wait 5`                          | Recent events; check that a test purchase or lead arrived.                                                                                                                                  |
+| `crisper logs list --since 24h`, `logs export --since 7d --output logs.csv --format csv` | Requests in a time window (last 10 days), filtered by `--event`, `--client`, `--status`; export writes up to `--max-pages` pages to a file and says how to resume. No visitor contact data. |
+| `crisper logs stats --since 7d --by day,source`                                          | Purchases and leads counted and summed per day, event, source, medium or client (last 12 days).                                                                                             |
+| `crisper logout`                                                                         | Revokes the sign-in and forgets it.                                                                                                                                                         |
 
 Site commands take `--org <orgId>` and `--site <domain or id>`. `orgs create`, `sites add`, `billing cancel`, and `integrations connect` ask for a typed yes in human interactive mode, or require `--yes` after approval in scripts.
 

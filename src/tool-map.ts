@@ -35,6 +35,9 @@ export const COMMAND_TOOLS: Record<string, readonly string[]> = {
   "install guide": ["get_installation_guide"],
   "events list": ["list_recent_events"],
   "events verify": ["check_event"],
+  "logs list": ["list_events"],
+  "logs export": ["list_events"],
+  "logs stats": ["get_event_stats"],
   "integrations list": ["list_integrations"],
   "integrations connect": ["connect_integration"],
   // start_integration_connection and attach_integration return the same setup page.

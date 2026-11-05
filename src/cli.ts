@@ -13,6 +13,7 @@ import {
   defaultContext,
   sessionOf,
 } from "./commands/context.js";
+import { logsExport, logsList, logsStats } from "./commands/logs.js";
 import {
   orgsCreate,
   orgsList,
@@ -430,6 +431,90 @@ export function createProgram(deps: ProgramDeps = {}): {
       signedIn(eventsVerify)(ctx, flags),
     ),
   );
+
+  const logs = program
+    .command("logs")
+    .description("pull the site's request logs and conversion counts");
+  type Window = Target & { since: string; until?: string };
+  type Filters = { event?: string; client?: string; status?: string };
+  const windowed = (cmd: Command, untilHelp: string) =>
+    withSite(cmd)
+      .requiredOption(
+        "--since <time>",
+        "start: ISO time, date (2026-11-04) or age (90m, 24h, 7d)",
+      )
+      .option("--until <time>", untilHelp);
+  const filtered = (cmd: Command) =>
+    cmd
+      .option("--event <name>", "only this event, e.g. Purchase or PageView")
+      .option("--client <name>", "only this client, e.g. GA4")
+      .option("--status <code>", "only this HTTP status, e.g. 200");
+  filtered(
+    windowed(
+      logs
+        .command("list")
+        .description("requests in a time window, newest first (last 10 days)"),
+      "end (default: now)",
+    ),
+  )
+    .option("--limit <n>", "rows per page, 1 to 100 (default 50)")
+    .option("--cursor <cursor>", "continue from a previous page")
+    .action((flags: Window & Filters & { limit?: string; cursor?: string }) =>
+      run("logs list", argvForRun, (ctx) => signedIn(logsList)(ctx, flags)),
+    );
+  filtered(
+    windowed(
+      logs
+        .command("export")
+        .description(
+          "every request in a time window to a file (NDJSON or CSV, last 10 days)",
+        ),
+      "end (default: now)",
+    ),
+  )
+    .requiredOption("--output <file>", "file to write")
+    .option("--format <format>", "ndjson or csv", "ndjson")
+    .option(
+      "--max-pages <n>",
+      "stop after this many pages of 100 (default 100)",
+    )
+    .option("--force", "replace the file if it exists", false)
+    .option(
+      "--cursor <cursor>",
+      "continue an export that stopped at --max-pages (data.nextCursor)",
+    )
+    .action(
+      (
+        flags: Window &
+          Filters & {
+            output: string;
+            format: string;
+            maxPages?: string;
+            force: boolean;
+            cursor?: string;
+          },
+      ) =>
+        run("logs export", argvForRun, (ctx) =>
+          signedIn(logsExport)(ctx, flags),
+        ),
+    );
+  windowed(
+    logs
+      .command("stats")
+      .description(
+        "purchases and leads counted and summed per day, event, source, medium or client (last 12 days)",
+      ),
+    "end (default: now)",
+  )
+    .option(
+      "--by <groups>",
+      "one or two of day, event, source, medium, client",
+      "day",
+    )
+    .option("--type <type>", "purchase or lead (default: both)")
+    .action((flags: Window & { by?: string; type?: string }) =>
+      run("logs stats", argvForRun, (ctx) => signedIn(logsStats)(ctx, flags)),
+    );
 
   const integrations = program
     .command("integrations")
