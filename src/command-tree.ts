@@ -32,6 +32,15 @@ export const EXAMPLES: Record<string, string[]> = {
   "install guide": ["crisper install guide --site example.com --json"],
   "events list": ["crisper events list --type purchase --limit 10 --json"],
   "events verify": ["crisper events verify --type purchase --wait 5 --json"],
+  "logs list": [
+    "crisper logs list --site example.com --since 24h --event Purchase --json",
+  ],
+  "logs export": [
+    "crisper logs export --site example.com --since 7d --format csv --output logs.csv --json",
+  ],
+  "logs stats": [
+    "crisper logs stats --site example.com --since 7d --by day,source --json",
+  ],
   "integrations list": ["crisper integrations list --site example.com --json"],
   "integrations link": ["crisper integrations link --site example.com --json"],
   "integrations connect": [

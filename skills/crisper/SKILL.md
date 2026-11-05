@@ -40,6 +40,14 @@ Use the returned next step and repeat status after completing each step:
    `crisper events verify --site example.com --type purchase --wait 5 --json`.
    This proves Crisper received the event, not platform acceptance.
 
+For reports, `crisper logs stats --site example.com --since 7d --by day,source --json`
+counts purchases and leads; `crisper logs list --since 24h --json` pages requests
+(pass `data.nextCursor` back with `--cursor`), and `crisper logs export --since 7d
+--output logs.ndjson --json` writes them to a file, up to `--max-pages` pages of 100. For export, `data.complete` false means it stopped early: resume with
+`--cursor` set to `data.nextCursor` and a new `--output`. `data.partial` true
+means Stape skipped rows in a busy stretch. For stats, `data.coverage.complete`
+false means counts are a minimum.
+
 If the site does not exist, propose it with
 `crisper sites add example.com --type shopify --json` first; with no
 organization yet, `crisper orgs create "Business name" --json` comes before it.

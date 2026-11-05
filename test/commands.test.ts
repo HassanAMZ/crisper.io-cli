@@ -1,4 +1,5 @@
-import { mkdtemp } from "node:fs/promises";
+import { writeFileSync } from "node:fs";
+import { mkdtemp, readFile, readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
@@ -1943,10 +1944,10 @@ describe("0.0.7: parity commands, one MCP session, clearer errors", () => {
     expect(h.json()).toMatchObject({
       command: "version",
       ok: true,
-      data: { version: "0.0.7" },
+      data: { version: "0.0.8" },
     });
     expect(await h.run("--version")).toBe(0);
-    expect(h.out).toEqual(["0.0.7"]);
+    expect(h.out).toEqual(["0.0.8"]);
   });
 
   it("billing cancel shows the period end as a UTC minute, not raw ISO", async () => {
@@ -2183,6 +2184,18 @@ describe("0.0.7 council round 1", () => {
       "events verify": ["events", "verify", ...S, "--type", "purchase"],
       "integrations list": ["integrations", "list", ...S],
       "integrations link": ["integrations", "link", ...S],
+      "logs list": ["logs", "list", ...S, "--since", "24h"],
+      "logs export": [
+        "logs",
+        "export",
+        ...S,
+        "--since",
+        "24h",
+        "--output",
+        join(tmpdir(), `crisperio-dispatch-${process.pid}.ndjson`),
+        "--force",
+      ],
+      "logs stats": ["logs", "stats", ...S, "--since", "7d"],
       "integrations connect": [
         "integrations",
         "connect",
@@ -2204,5 +2217,568 @@ describe("0.0.7 council round 1", () => {
       expect(await h.run("--json", ...argv[command]!), command).toBe(0);
       expect(h.calls.at(-1)?.name, command).toBe(tools[0]);
     }
+  });
+});
+
+describe("0.0.8: logs list, export and stats", () => {
+  let h: ReturnType<typeof harness>;
+  const site = {
+    websiteId: "w1",
+    orgId: "org_0000000001",
+    domain: "clinic.com",
+  };
+  const event = (i: number, extra: Record<string, unknown> = {}) => ({
+    logId: `l${i}`,
+    time: new Date(1_700_000_000_000 - i * 1000).toISOString(),
+    event: "Purchase",
+    client: "GA4",
+    status: "200",
+    path: "/g/collect",
+    source: "facebook",
+    medium: "paid",
+    value: 10,
+    currency: "USD",
+    visitor: "person",
+    ...extra,
+  });
+  beforeEach(async () => {
+    h = harness();
+    await h.init();
+    h.tools.get_connection = () => ({
+      result: { connected: true, organizations: [ORG], instructions: "" },
+    });
+    h.tools.list_sites = () => ({
+      result: { orgId: "org_0000000001", sites: SITES, truncated: false },
+    });
+  });
+
+  it("logs list sends the window and filters, and prints how to get older rows", async () => {
+    h.tools.list_events = () => ({
+      result: {
+        ...site,
+        events: [event(1)],
+        nextCursor: "abc",
+        partial: false,
+        window: { from: "a", to: "b" },
+      },
+    });
+    expect(
+      await h.run(
+        "logs",
+        "list",
+        "--site",
+        "clinic.com",
+        "--since",
+        "24h",
+        "--until",
+        "2026-11-04",
+        "--event",
+        "Purchase",
+        "--limit",
+        "10",
+      ),
+    ).toBe(0);
+    expect(h.calls.at(-1)).toEqual({
+      name: "list_events",
+      args: {
+        websiteId: "w1",
+        since: "24h",
+        until: "2026-11-04",
+        event: "Purchase",
+        limit: 10,
+      },
+    });
+    const out = h.out.join("\n");
+    expect(out).toContain("facebook / paid");
+    expect(out).toContain(
+      "crisper logs list --org org_0000000001 --site clinic.com --since 24h --until 2026-11-04 --event Purchase --cursor abc",
+    );
+    expect(
+      await h.run(
+        "--json",
+        "logs",
+        "list",
+        "--site",
+        "clinic.com",
+        "--since",
+        "24h",
+        "--limit",
+        "101",
+      ),
+    ).toBe(2);
+    expect(
+      await h.run(
+        "--json",
+        "logs",
+        "list",
+        "--site",
+        "clinic.com",
+        "--since",
+        "1 day",
+      ),
+    ).toBe(2);
+    expect(h.json().error.code).toBe("INVALID_ARGUMENT");
+  });
+
+  it("logs export follows every page, waits out a rate limit, and writes safe CSV", async () => {
+    const pages: Record<string, { events: unknown[]; next: string | null }> = {
+      "": {
+        events: [event(1), event(2, { source: "=HYPERLINK(1)" })],
+        next: "p2",
+      },
+      p2: { events: [event(3)], next: "p3" },
+      p3: { events: [event(4, { visitor: "bot" })], next: null },
+    };
+    let limited = false;
+    h.tools.list_events = (args) => {
+      const key = String(args.cursor ?? "");
+      if (key === "p2" && !limited) {
+        limited = true;
+        return {
+          error: "Rate limit reached. Retry in 7 seconds.",
+          code: "rate_limited",
+          meta: { "io.crisper/retryAfterSeconds": 7 },
+        };
+      }
+      return {
+        result: {
+          ...site,
+          events: pages[key]!.events,
+          nextCursor: pages[key]!.next,
+          partial: key === "p3",
+          window: { from: "a", to: "b" },
+        },
+      };
+    };
+    const file = join(
+      await mkdtemp(join(tmpdir(), "crisperio-export-")),
+      "out.csv",
+    );
+    const before = h.now();
+    expect(
+      await h.run(
+        "--json",
+        "logs",
+        "export",
+        "--site",
+        "clinic.com",
+        "--since",
+        "7d",
+        "--format",
+        "csv",
+        "--output",
+        file,
+      ),
+    ).toBe(0);
+    expect(h.now() - before).toBe(7000);
+    expect(h.json().data).toMatchObject({
+      file,
+      format: "csv",
+      rows: 4,
+      pages: 3,
+      partial: true,
+      complete: true,
+      nextCursor: null,
+    });
+    const csv = (await readFile(file, "utf8")).trim().split("\n");
+    expect(csv[0]).toBe(
+      "time,event,client,status,path,source,medium,value,currency,visitor,logId",
+    );
+    expect(csv).toHaveLength(5);
+    expect(csv[2]).toContain(`"'=HYPERLINK(1)"`);
+    expect(
+      h.calls.filter((c) => c.name === "list_events").map((c) => c.args.limit),
+    ).toEqual([100, 100, 100, 100]);
+    // An existing file is kept unless --force.
+    expect(
+      await h.run(
+        "--json",
+        "logs",
+        "export",
+        "--site",
+        "clinic.com",
+        "--since",
+        "7d",
+        "--output",
+        file,
+      ),
+    ).toBe(2);
+    expect(h.json().error.next).toContain("--force");
+  });
+
+  it("logs export stops at --max-pages and says how to continue", async () => {
+    h.tools.list_events = (args) => ({
+      result: {
+        ...site,
+        events: [event(Number(args.cursor ?? 0))],
+        nextCursor: String(Number(args.cursor ?? 0) + 1),
+        partial: false,
+        window: { from: "a", to: "b" },
+      },
+    });
+    const file = join(
+      await mkdtemp(join(tmpdir(), "crisperio-export-")),
+      "out.ndjson",
+    );
+    expect(
+      await h.run(
+        "--json",
+        "logs",
+        "export",
+        "--site",
+        "clinic.com",
+        "--since",
+        "7d",
+        "--output",
+        file,
+        "--max-pages",
+        "2",
+      ),
+    ).toBe(0);
+    expect(h.json().data).toMatchObject({
+      rows: 2,
+      pages: 2,
+      complete: false,
+      nextCursor: "2",
+    });
+    const lines = (await readFile(file, "utf8")).trim().split("\n");
+    expect(lines.map((l) => JSON.parse(l).logId)).toEqual(["l0", "l1"]);
+    // The human hint and --cursor resume the export into another file.
+    const next = file.replace("out.ndjson", "next.ndjson");
+    expect(
+      await h.run(
+        "logs",
+        "export",
+        "--site",
+        "clinic.com",
+        "--since",
+        "7d",
+        "--output",
+        file.replace("out", "unused"),
+        "--max-pages",
+        "1",
+      ),
+    ).toBe(0);
+    expect(h.out.join("\n")).toContain(
+      "crisper logs export --org org_0000000001 --site clinic.com --since 7d --format ndjson --output <next file> --cursor 1",
+    );
+    expect(
+      await h.run(
+        "--json",
+        "logs",
+        "export",
+        "--site",
+        "clinic.com",
+        "--since",
+        "7d",
+        "--output",
+        next,
+        "--max-pages",
+        "2",
+        "--cursor",
+        "2",
+      ),
+    ).toBe(0);
+    expect(
+      h.calls.filter((c) => c.name === "list_events")[0]!.args.cursor,
+    ).toBe("2");
+    const resumed = (await readFile(next, "utf8")).trim().split("\n");
+    expect(resumed.map((l) => JSON.parse(l).logId)).toEqual(["l2", "l3"]);
+  });
+
+  it("logs stats sends the groups and type, and shows that counts may be a minimum", async () => {
+    h.tools.get_event_stats = () => ({
+      result: {
+        ...site,
+        timezone: "Asia/Karachi",
+        rows: [
+          {
+            day: "2026-11-04",
+            source: "google",
+            count: 2,
+            value: { USD: 25.5 },
+          },
+        ],
+        totals: { count: 2, value: { USD: 25.5 } },
+        coverage: {
+          source: "saved_conversions",
+          from: null,
+          to: null,
+          truncated: false,
+          complete: false,
+        },
+      },
+    });
+    expect(
+      await h.run(
+        "logs",
+        "stats",
+        "--site",
+        "clinic.com",
+        "--since",
+        "7d",
+        "--by",
+        "day,source",
+        "--type",
+        "purchase",
+      ),
+    ).toBe(0);
+    expect(h.calls.at(-1)).toEqual({
+      name: "get_event_stats",
+      args: {
+        websiteId: "w1",
+        since: "7d",
+        groupBy: ["day", "source"],
+        event: "Purchase",
+      },
+    });
+    const out = h.out.join("\n");
+    expect(out).toContain("25.5 USD");
+    expect(out).toContain("Counts are a minimum");
+    expect(
+      await h.run(
+        "--json",
+        "logs",
+        "stats",
+        "--site",
+        "clinic.com",
+        "--since",
+        "7d",
+        "--by",
+        "day,source,event",
+      ),
+    ).toBe(2);
+    expect(
+      await h.run(
+        "--json",
+        "logs",
+        "stats",
+        "--site",
+        "clinic.com",
+        "--since",
+        "7d",
+        "--type",
+        "pageview",
+      ),
+    ).toBe(2);
+  });
+
+  it("logs export keeps going through many rate limits, one at a time", async () => {
+    let calls = 0;
+    h.tools.list_events = (args) => {
+      calls += 1;
+      // Every other call is rate limited: more than five in all.
+      if (calls % 2 === 1)
+        return {
+          error: "Rate limit reached. Retry in 3 seconds.",
+          code: "rate_limited",
+          meta: { "io.crisper/retryAfterSeconds": 3 },
+        };
+      const n = Number(args.cursor ?? 0);
+      return {
+        result: {
+          ...site,
+          events: [event(n)],
+          nextCursor: n < 6 ? String(n + 1) : null,
+          partial: false,
+          window: { from: "a", to: "b" },
+        },
+      };
+    };
+    const file = join(
+      await mkdtemp(join(tmpdir(), "crisperio-export-")),
+      "out.ndjson",
+    );
+    expect(
+      await h.run(
+        "--json",
+        "logs",
+        "export",
+        "--site",
+        "clinic.com",
+        "--since",
+        "7d",
+        "--output",
+        file,
+      ),
+    ).toBe(0);
+    expect(h.json().data).toMatchObject({ rows: 7, complete: true });
+  });
+
+  it("logs export keeps a file that appeared while it ran, unless --force", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "crisperio-export-"));
+    const file = join(dir, "out.ndjson");
+    h.tools.list_events = () => {
+      // Someone else writes the destination mid-export.
+      writeFileSync(file, "theirs\n");
+      return {
+        result: {
+          ...site,
+          events: [event(1)],
+          nextCursor: null,
+          partial: false,
+          window: { from: "a", to: "b" },
+        },
+      };
+    };
+    expect(
+      await h.run(
+        "--json",
+        "logs",
+        "export",
+        "--site",
+        "clinic.com",
+        "--since",
+        "7d",
+        "--output",
+        file,
+      ),
+    ).toBe(2);
+    expect(h.json().error.message).toContain("appeared while exporting");
+    expect(await readFile(file, "utf8")).toBe("theirs\n");
+    expect((await readdir(dir)).sort()).toEqual(["out.ndjson"]);
+    expect(
+      await h.run(
+        "--json",
+        "logs",
+        "export",
+        "--site",
+        "clinic.com",
+        "--since",
+        "7d",
+        "--output",
+        file,
+        "--force",
+      ),
+    ).toBe(0);
+    expect(JSON.parse((await readFile(file, "utf8")).trim()).logId).toBe("l1");
+  });
+
+  it("logs export keeps the rows it read when a later page fails, and says how to resume", async () => {
+    h.tools.list_events = (args) => {
+      const n = Number(args.cursor ?? 0);
+      if (n === 2)
+        return {
+          error: "Crisper could not read the logs right now.",
+          code: "unavailable",
+        };
+      return {
+        result: {
+          ...site,
+          events: [event(n, n === 0 ? { value: -12.5 } : {})],
+          nextCursor: String(n + 1),
+          partial: false,
+          window: { from: "a", to: "b" },
+        },
+      };
+    };
+    const file = join(
+      await mkdtemp(join(tmpdir(), "crisperio-export-")),
+      "out.csv",
+    );
+    expect(
+      await h.run(
+        "--json",
+        "logs",
+        "export",
+        "--site",
+        "clinic.com",
+        "--since",
+        "7d",
+        "--format",
+        "csv",
+        "--output",
+        file,
+      ),
+    ).toBe(1);
+    const env = h.json();
+    expect(env.data).toMatchObject({
+      rows: 2,
+      complete: false,
+      nextCursor: "2",
+    });
+    expect(env.error.message).toContain("The 2 rows read before it are in");
+    expect(env.error.next).toContain("--output <next file> --cursor 2");
+    const csv = (await readFile(file, "utf8")).trim().split("\n");
+    expect(csv).toHaveLength(3);
+    // A refund stays a number, not a guarded formula.
+    expect(csv[1]).toContain(`"-12.5"`);
+  });
+
+  it("logs export stops when a page comes back empty with the same cursor", async () => {
+    h.tools.list_events = (args) => ({
+      result: {
+        ...site,
+        events: args.cursor ? [] : [event(1)],
+        nextCursor: "stuck",
+        partial: false,
+        window: { from: "a", to: "b" },
+      },
+    });
+    const file = join(
+      await mkdtemp(join(tmpdir(), "crisperio-export-")),
+      "out.ndjson",
+    );
+    expect(
+      await h.run(
+        "--json",
+        "logs",
+        "export",
+        "--site",
+        "clinic.com",
+        "--since",
+        "7d",
+        "--output",
+        file,
+      ),
+    ).toBe(1);
+    expect(h.json().error.message).toContain("same page again");
+    expect(h.calls.filter((c) => c.name === "list_events")).toHaveLength(2);
+    expect((await readFile(file, "utf8")).trim().split("\n")).toHaveLength(1);
+  });
+
+  it("logs export keeps the rows it read when stopped with Ctrl-C", async () => {
+    const controller = new AbortController();
+    h.tools.list_events = (args) => {
+      const n = Number(args.cursor ?? 0);
+      if (n === 1) controller.abort();
+      return {
+        result: {
+          ...site,
+          events: [event(n)],
+          nextCursor: String(n + 1),
+          partial: false,
+          window: { from: "a", to: "b" },
+        },
+      };
+    };
+    const file = join(
+      await mkdtemp(join(tmpdir(), "crisperio-export-")),
+      "out.ndjson",
+    );
+    expect(
+      await h.runWith(
+        controller,
+        "--json",
+        "logs",
+        "export",
+        "--site",
+        "clinic.com",
+        "--since",
+        "7d",
+        "--output",
+        file,
+      ),
+    ).toBe(130);
+    const env = h.json();
+    expect(env.error.code).toBe("INTERRUPTED");
+    // The page in flight was cancelled: page 1 is kept, and it resumes at 1.
+    expect(env.data).toMatchObject({
+      rows: 1,
+      complete: false,
+      nextCursor: "1",
+    });
+    expect(env.error.next).toContain("--cursor 1");
+    expect((await readFile(file, "utf8")).trim().split("\n")).toHaveLength(1);
   });
 });
