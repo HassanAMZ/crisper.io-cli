@@ -532,9 +532,18 @@ export function createProgram(deps: ProgramDeps = {}): {
 
   const integrations = program
     .command("integrations")
-    .description("Meta, TikTok and other platforms");
+    .description("Meta, TikTok and other platforms")
+    .addHelpText(
+      "after",
+      `\nConfiguration JSON fields (hidden prompt or --configuration-stdin only):\n  meta, tiktok, snapchat: pixelId, capiToken\n  ga4: measurementId, optional apiSecret (omission preserves the saved secret on update)\n  gads: conversionId (AW- number), purchase label, optional event labels\n  twitter: pixelId, accessToken, purchase event ID, optional event IDs\n  microsoft_ads: uetTagId, capiToken\n  linkedin: accessToken and at least one event conversion ID\n  pinterest: advertiserId, capiToken (existing integrations only)\nEvent keys: purchase, generateLead, addToCart, beginCheckout, addPaymentInfo, addShippingInfo, pageView, viewCart, viewItem.\nUpdates replace the full event mapping; omitted events are removed. Credentials affect all sites sharing the integration.\nUse integrations link for browser setup guidance. Saving manual configuration does not grant OAuth access or prove delivery.\n`,
+    );
   withSite(
-    integrations.command("list").description("connected integrations"),
+    integrations
+      .command("list")
+      .description(
+        "connected integrations; scope organization includes saved connections",
+      )
+      .option("--scope <scope>", "site or organization"),
   ).action((flags: Target) =>
     run("integrations list", argvForRun, (ctx) =>
       signedIn(integrationsList)(ctx, flags),
@@ -552,38 +561,41 @@ export function createProgram(deps: ProgramDeps = {}): {
       signedIn(integrationsLink)(ctx, flags),
     ),
   );
-  withSite(
-    integrations
-      .command("connect")
-      .description(
-        "connect a Meta or TikTok pixel (the token is asked for, never a flag)",
-      )
-      .requiredOption("--platform <platform>", "meta or tiktok")
-      .requiredOption(
-        "--pixel <id>",
-        "Meta pixel (dataset) ID or TikTok pixel code",
-      )
-      .option("--label <name>", "name shown in Crisper")
-      .option(
-        "--token-stdin",
-        "read the access token from standard input",
-        false,
-      )
-      .option("--yes", "don't ask for confirmation", false),
-  ).action(
-    (
-      flags: Target & {
-        platform: string;
-        pixel: string;
-        label?: string;
-        tokenStdin: boolean;
-        yes: boolean;
-      },
-    ) =>
-      run("integrations connect", argvForRun, (ctx) =>
-        signedIn(integrationsConnect)(ctx, flags),
+  for (const operation of ["connect", "update"] as const) {
+    withSite(
+      integrations
+        .command(operation)
+        .description(
+          `${operation} a manual integration; org-shared credentials via hidden JSON prompt or stdin only`,
+        )
+        .option(
+          "--platform <platform>",
+          "meta, tiktok, snapchat, twitter, ga4, gads, microsoft_ads, linkedin; pinterest existing-only",
+        )
+        .option(
+          "--integration <id>",
+          "saved integration ID; required for update; connect attaches it without credentials",
+        )
+        .option(
+          "--pixel <id>",
+          "legacy Meta/TikTok pixel ID (hidden token prompt)",
+        )
+        .option("--label <name>", "name shown in Crisper")
+        .option("--token-stdin", "legacy Meta/TikTok token from stdin", false)
+        .option(
+          "--configuration-stdin",
+          "full provider configuration JSON from stdin; never put secrets in flags",
+          false,
+        )
+        .option("--yes", "explicitly approve the org-shared change", false),
+    ).action((flags) =>
+      run(`integrations ${operation}`, argvForRun, (ctx) =>
+        signedIn((c, session) =>
+          integrationsConnect(c, session, flags, operation === "update"),
+        )(ctx, flags),
       ),
-  );
+    );
+  }
 
   program
     .command("commands")

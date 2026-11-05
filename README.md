@@ -60,7 +60,7 @@ terminal prompt or --token-stdin piped by the human.
 `crisper commands --json` lists every command, argument, option, example, exit
 code, and error code. See [the skill](skills/crisper/SKILL.md) for setup order.
 
-Without `--yes`, `orgs create`, `sites add`, `billing cancel`, and `integrations connect` return
+Without `--yes`, `orgs create`, `sites add`, `billing cancel`, `integrations connect`, and `integrations update` return
 `CONFIRMATION_REQUIRED` (exit 2) in JSON or non-interactive mode. The envelope's
 `data.changes` describes the proposed change and `data.confirmCommand` preserves
 the invocation with `--yes` added. Show the changes, get human approval, then run
@@ -83,14 +83,14 @@ is unconfirmed: check status before retrying.
 | `crisper billing link`, `billing status`, `billing cancel`                               | The page to pay, the subscription state, and cancel at the end of the period.                                                                                                                                                                                |
 | `crisper dns records`, `dns check`                                                       | The tracking domain's DNS records; check them (exit 6 until verified).                                                                                                                                                                                       |
 | `crisper install snippet`, `install guide`, `install check`                              | The tracking script for the website's platform; the dashboard's installation page for it.                                                                                                                                                                    |
-| `crisper integrations list`, `integrations connect --platform meta --pixel <id>`         | Connected platforms; connect Meta or TikTok. The token is asked for at a hidden prompt (or `--token-stdin`), never as a flag.                                                                                                                                |
-| `crisper integrations link`                                                              | The dashboard page to connect any other platform, such as GA4 or Google Ads.                                                                                                                                                                                 |
+| `crisper integrations list`, `integrations connect --platform meta --pixel <id>`         | Connected platforms; the legacy shortcut connects Meta or TikTok. The token is asked for at a hidden prompt (or `--token-stdin`), never as a flag.                                                                                                           |
+| `crisper integrations link`                                                              | The dashboard page for provider setup guidance and browser secret entry.                                                                                                                                                                                     |
 | `crisper events list`, `events verify --type purchase --wait 5`                          | Recent events; check that a test purchase or lead arrived.                                                                                                                                                                                                   |
 | `crisper logs list --since 24h`, `logs export --since 7d --output logs.csv --format csv` | Requests in a time window (last 10 days), filtered by `--event`, `--client`, `--status`; export writes up to `--max-pages` pages to a file and says how to resume. Masked contacts only: email first letter + *** + domain, phone last four, IP first block. |
 | `crisper logs stats --since 7d --by day,source`                                          | Purchases and leads counted and summed per day, event, source, medium or client (last 12 days).                                                                                                                                                              |
 | `crisper logout`                                                                         | Revokes the sign-in and forgets it.                                                                                                                                                                                                                          |
 
-Site commands take `--org <orgId>` and `--site <domain or id>`. `orgs create`, `sites add`, `billing cancel`, and `integrations connect` ask for a typed yes in human interactive mode, or require `--yes` after approval in scripts.
+Site commands take `--org <orgId>` and `--site <domain or id>`. `orgs create`, `sites add`, `billing cancel`, `integrations connect`, and `integrations update` ask for a typed yes in human interactive mode, or require `--yes` after approval in scripts.
 
 Add `--json` before the command for a single machine-readable envelope: `schemaVersion`, `command`, `ok`, `context`, `data`, `error`, `meta`. Exit codes: 0 ok, 1 failure, 2 usage, 3 not signed in, 4 no access, 5 rate limited, 6 needs your action, 7 unavailable, 8 unconfirmed, 130 interrupted.
 
@@ -111,3 +111,23 @@ Every Crisper MCP tool has a command; `src/tool-map.ts` says which. Before a rel
 `crisper install check --site example.com --json` checks fetched homepage HTML for the site's loader address (8 seconds, 512 KiB maximum). A source match exits 0; absent/unknown evidence exits 7. This does not execute JavaScript or prove runtime tracking, app/checkout settings or provider delivery. Send a test event and use `crisper events verify` for receipt evidence.
 
 Logs expose only masked contact hints: `j***@gmail.com`, `•••• 1234`, `203.*.*.*` or `2001:*:*:*:*:*:*:*`. Missing, malformed or hashed contacts are null. JSON/NDJSON include `contact`; CSV appends `emailMasked`, `phoneMasked`, `ipMasked`. No raw-contact option exists. DNS records must be added at the customer's DNS host; per-record status is unknown when the provider supplies none.
+
+## Integration configuration and updates
+
+`integrations list --scope organization` lists saved integrations, including ones not attached to the selected site (bounded to 100 rows; inspect `truncated`). Default scope `site` keeps the existing 50-attachment limit. `integrations connect --integration <id> --yes` attaches a saved connection without replacing credentials. `integrations update --integration <id>` updates its full configuration across every site sharing it.
+
+For new configurations, use `integrations connect --platform <platform>`. Enter the full JSON in the hidden prompt or pipe it with `--configuration-stdin --yes`; there is no secret-valued flag. Obtain approval before piping secrets. Existing Meta/TikTok `--pixel` and `--token-stdin` calls remain supported. Connecting an already saved provider identifier replaces its full configuration across sharing sites, including removal of omitted event mappings. The preview identifies the target and operation, removed/changed event keys and credential replacement or preservation without exposing secrets. Discovery includes the public provider identifier to distinguish unlabeled connections. At most eight pending approval slots are retained per organization; a displaced preview must be requested again. Both commands preview on the server, then submit a one-time confirmation bound to the actor, organization, site, values and current shared state. A changed or expired preview must be repeated and approved again. Deploy the new backend before this CLI.
+
+| Platform               | Configuration fields                                                                |
+| ---------------------- | ----------------------------------------------------------------------------------- |
+| meta, tiktok, snapchat | `pixelId`, `capiToken`                                                              |
+| ga4                    | `measurementId`, optional `apiSecret`                                               |
+| gads                   | `conversionId` (bare number or AW- number), `purchase` label, optional event labels |
+| twitter                | `pixelId`, `accessToken`, `purchase` event ID, optional event IDs                   |
+| microsoft_ads          | `uetTagId`, `capiToken`                                                             |
+| linkedin               | `accessToken`, at least one event conversion ID                                     |
+| pinterest              | `advertiserId`, `capiToken`; existing integrations only                             |
+
+Event keys are `purchase`, `generateLead`, `addToCart`, `beginCheckout`, `addPaymentInfo`, `addShippingInfo`, `pageView`, `viewCart`, `viewItem`. Updates replace the event mapping: omitted events are removed. Omitted/blank GA4 `apiSecret` preserves the existing secret on update. LinkedIn accepts one integration per site. No credential is returned by list or write responses.
+
+`--yes` explicitly approves the org-shared impact; scripts must obtain human approval first. Manual configuration does not sign in to the provider or grant OAuth access. Use `integrations link` for browser guidance and complete any provider consent or credential acquisition yourself. A saved configuration and scheduled sync do not establish provider acceptance or event delivery.

@@ -55,13 +55,12 @@ or hashed contacts are null; there is no raw-contact option.
 If the site does not exist, propose it with
 `crisper sites add example.com --type shopify --json` first; with no
 organization yet, `crisper orgs create "Business name" --json` comes before it.
-For platforms other than Meta and TikTok, `crisper integrations link --json`
-returns the dashboard page where the human connects them.
+`crisper integrations link --json` returns browser setup guidance. All dashboard manual providers support `integrations connect --platform <platform>` with hidden configuration JSON or `--configuration-stdin`; consult `integrations --help` for the fields. Pinterest is existing-only. `integrations list --scope organization` discovers saved IDs; `connect --integration <id>` attaches one without changing credentials. `integrations update --integration <id>` replaces the full configuration for every site sharing it (omitted event mappings are removed; omitted GA4 apiSecret is preserved).
 Replace the example domain and pixel ID with the human's actual target.
 
 ## Changes need human approval
 
-`orgs create`, `sites add`, `billing cancel`, and `integrations connect` return
+`orgs create`, `sites add`, `billing cancel`, `integrations connect`, and `integrations update` return
 `CONFIRMATION_REQUIRED` (exit 2) without making the change when `--yes` is absent.
 The envelope's `data.changes` explains the effects; `data.confirmCommand` is the
 original invocation with `--yes` added. Show the changes to the human. Only run
@@ -70,8 +69,7 @@ for a typed yes, even with a TTY. An already scheduled cancellation can succeed
 without another change.
 
 Never ask the human to paste platform tokens into chat. For integration tokens,
-have the human pipe the token using `--token-stdin`, or use the hidden terminal
-prompt. Request approval before token entry. Tokens are never command arguments.
+have the human pipe legacy Meta/TikTok tokens using `--token-stdin`, full provider JSON using `--configuration-stdin`, or use the hidden terminal prompt. The server previews each write and requires a one-time confirmation; explain the org-shared impact before approval. Request approval before token entry. Tokens are never command arguments.
 Run `confirmCommand` exactly as given; it already starts with `npx crisperio`
 when the CLI was started that way.
 Exit 8 means a change may have happened: inspect status before retrying.

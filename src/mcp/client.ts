@@ -146,6 +146,11 @@ export function toolError(
         exit: EXIT.denied,
         next: "Email support@crisper.io if this should belong to you.",
       });
+    case "integration_conflict":
+      return new CliError("CONFLICT", message, {
+        exit: EXIT.denied,
+        next: "Review saved integrations and choose a compatible identifier or attachment.",
+      });
     case "confirmation_invalid":
       return new CliError("INVALID_ARGUMENT", message, {
         exit: EXIT.usage,

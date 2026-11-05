@@ -9,6 +9,7 @@ export const ACCOUNT_CHANGES = [
   "sites add",
   "billing cancel",
   "integrations connect",
+  "integrations update",
 ] as const;
 
 export const EXAMPLES: Record<string, string[]> = {
@@ -44,6 +45,9 @@ export const EXAMPLES: Record<string, string[]> = {
   ],
   "integrations list": ["crisper integrations list --site example.com --json"],
   "integrations link": ["crisper integrations link --site example.com --json"],
+  "integrations update": [
+    "crisper integrations update --site example.com --integration <id> --configuration-stdin --yes",
+  ],
   "integrations connect": [
     "crisper integrations connect --site example.com --platform meta --pixel 1234567890 --json",
   ],
