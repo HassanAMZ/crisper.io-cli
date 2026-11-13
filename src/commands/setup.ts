@@ -641,6 +641,14 @@ export async function integrationsConnect(
       "microsoft_ads",
       "linkedin",
       "pinterest",
+      "openai",
+      "reddit",
+      "quora",
+      "nextdoor",
+      "yelp",
+      "adroll",
+      "amazon",
+      "spotify",
     ].includes(platform)
   )
     throw new CliError(

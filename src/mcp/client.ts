@@ -151,6 +151,11 @@ export function toolError(
         exit: EXIT.denied,
         next: "Review saved integrations and choose a compatible identifier or attachment.",
       });
+    case "admin_required":
+      return new CliError("ACCESS_DENIED", message, {
+        exit: EXIT.denied,
+        next: "Ask an organization admin to make this change.",
+      });
     case "confirmation_invalid":
       return new CliError("INVALID_ARGUMENT", message, {
         exit: EXIT.usage,

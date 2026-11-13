@@ -491,3 +491,43 @@ export async function logsStats(
       ].join("\n"),
   };
 }
+
+/** `crisper logs drop`: why did the site's leads drop (get_lead_drop). */
+export async function logsDrop(
+  ctx: CommandContext,
+  session: Session,
+  flags: TargetFlags,
+) {
+  const { orgId, site } = await resolveSite(ctx, session, flags);
+  const { data } = await callTool(
+    session,
+    ctx.config.origin,
+    "get_lead_drop",
+    { websiteId: site.websiteId },
+    ctx.fetcher,
+    { signal: ctx.signal },
+  );
+  const d = rec(data);
+  const summary = Array.isArray(d.summary)
+    ? d.summary.filter((line): line is string => typeof line === "string")
+    : [];
+  const days = Array.isArray(d.days) ? d.days.map(rec) : [];
+  return {
+    data,
+    context: { orgId, siteId: site.websiteId },
+    human: () =>
+      [
+        ...summary.map(safeText),
+        "",
+        table([
+          ["DAY", "LEADS"],
+          ...days.map((day) => [
+            str(day.date) ?? "",
+            typeof day.leads === "number" ? String(day.leads) : "unknown",
+          ]),
+        ]),
+        "",
+        `Leads per finished day in ${safeText(d.timezone)}, as Overview saved them. Delivery is Crisper's own check, not Meta's acceptance; sources are what visits reported, not attribution.`,
+      ].join("\n"),
+  };
+}
