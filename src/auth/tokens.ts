@@ -1,4 +1,5 @@
 import { CliError, EXIT } from "../errors.js";
+import { record } from "../record.js";
 import { type TokenSet, tokenSetFrom } from "./device.js";
 
 const form = (fields: Record<string, string>) =>
@@ -46,10 +47,9 @@ export async function refreshTokens(
     });
   }
   const body: unknown = await response.json().catch(() => ({}));
-  const record =
-    body && typeof body === "object" ? (body as Record<string, unknown>) : {};
+  const fields = record(body);
   if (response.ok) {
-    const tokens = tokenSetFrom(record, now());
+    const tokens = tokenSetFrom(fields, now());
     if (tokens)
       return {
         ...tokens,
@@ -58,7 +58,7 @@ export async function refreshTokens(
       };
   }
   if (
-    record.error === "invalid_grant" ||
+    fields.error === "invalid_grant" ||
     response.status === 400 ||
     response.status === 401
   )

@@ -2,6 +2,7 @@ import type { Session } from "../auth/session.js";
 import { CliError, EXIT } from "../errors.js";
 import { callTool } from "../mcp/client.js";
 import { type Envelope, safeText, table } from "../output.js";
+import { record } from "../record.js";
 import type { CommandContext } from "./context.js";
 import { resolveOrg } from "./target.js";
 
@@ -53,8 +54,6 @@ function toolInput(request: MembersRequest): Record<string, unknown> {
   }
 }
 
-const record = (value: unknown): Record<string, unknown> =>
-  value && typeof value === "object" ? (value as Record<string, unknown>) : {};
 const rows = (value: unknown) =>
   Array.isArray(value) ? value.map(record) : [];
 

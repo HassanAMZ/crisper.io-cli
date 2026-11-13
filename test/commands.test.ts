@@ -3519,7 +3519,13 @@ describe("TASK-643 members", () => {
 
   it("invite --admin asks for Admin, and --json mirrors the tool output", async () => {
     h.tools.invite_member = () => ({
-      result: { orgId: ORG.orgId, role: "org:admin", invited: 0, results: [], note },
+      result: {
+        orgId: ORG.orgId,
+        role: "org:admin",
+        invited: 0,
+        results: [],
+        note,
+      },
     });
     expect(
       await h.run("members", "invite", "a@example.com", "--admin", "--json"),
@@ -3559,6 +3565,37 @@ describe("TASK-643 members", () => {
     });
   });
 
+  it("invite with 11 emails prints Crisper's own limit message, not a schema error", async () => {
+    const message =
+      "Use 1 to 10 emails per call; send a longer list in several calls.";
+    h.tools.invite_member = () => ({
+      error: message,
+      code: "invalid_argument",
+    });
+    const emails = Array.from({ length: 11 }, (_, i) => `p${i}@example.com`);
+    expect(await h.run("members", "invite", ...emails, "--json")).toBe(2);
+    expect(h.calls.at(-1)!.args.emails).toEqual(emails);
+    expect(h.json().error).toMatchObject({
+      code: "INVALID_ARGUMENT",
+      message,
+    });
+  });
+
+  it("revoke prints the server's next step as sent, with its crisper command", async () => {
+    const serverNote =
+      "No pending invitation matches; nothing was changed. It may have been accepted or revoked already: call list_members (CLI: `crisper members list`).";
+    h.tools.revoke_invite = () => ({
+      result: {
+        orgId: ORG.orgId,
+        status: "not_pending",
+        target: "a@example.com",
+        note: serverNote,
+      },
+    });
+    expect(await h.run("members", "revoke", "a@example.com")).toBe(0);
+    expect(h.out.join("\n")).toBe(`not_pending\n\n${serverNote}`);
+  });
+
   it("refuses a role other than member or admin before calling the tool", async () => {
     h.tools.set_member_role = () => ({ result: { status: "updated" } });
     expect(
@@ -3569,14 +3606,19 @@ describe("TASK-643 members", () => {
 
   it("a member write the server could not confirm points at members list", async () => {
     h.tools.set_member_role = () => ({
-      error: "Member change could not be confirmed: Clerk did not answer in time.",
+      // As lib/mcp/server.ts sends it to every MCP client.
+      error:
+        "Member change could not be confirmed: Clerk gave no clear answer. The change may have completed. Call list_members before retrying.",
       code: "failed",
     });
     expect(
       await h.run("members", "role", "a@example.com", "admin", "--json"),
     ).toBe(8);
-    expect(h.json().error.next).toBe(
-      "Run `crisper members list` before trying again.",
-    );
+    expect(h.json().error).toMatchObject({
+      code: "WRITE_UNCONFIRMED",
+      message:
+        "Member change could not be confirmed: Clerk gave no clear answer.",
+      next: "Run `crisper members list` before trying again.",
+    });
   });
 });

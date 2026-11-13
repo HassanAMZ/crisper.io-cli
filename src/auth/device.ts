@@ -1,4 +1,5 @@
 import { CliError, EXIT } from "../errors.js";
+import { record } from "../record.js";
 
 /**
  * OAuth device authorization grant (RFC 8628) against the discovered issuer.
@@ -101,8 +102,7 @@ async function postForm(
   const body: unknown = await response.json().catch(() => ({}));
   return {
     status: response.status,
-    body:
-      body && typeof body === "object" ? (body as Record<string, unknown>) : {},
+    body: record(body),
   };
 }
 

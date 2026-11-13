@@ -2,6 +2,7 @@ import { type Session } from "../auth/session.js";
 import { CliError, EXIT } from "../errors.js";
 import { callTool } from "../mcp/client.js";
 import { safeText } from "../output.js";
+import { isRecord } from "../record.js";
 import { type CommandContext } from "./context.js";
 import { canChoose, fetchOrganizations } from "./orgs.js";
 
@@ -64,8 +65,9 @@ export async function listSites(
       { exit: EXIT.unavailable, next: "Update the CLI: npx crisperio@latest" },
     );
   const sites = d.sites.flatMap((item): Site[] => {
-    const s = item as Record<string, unknown> | null;
-    if (!s || typeof s.websiteId !== "string" || typeof s.domain !== "string")
+    if (!isRecord(item)) return [];
+    const s = item;
+    if (typeof s.websiteId !== "string" || typeof s.domain !== "string")
       return [];
     return [
       {

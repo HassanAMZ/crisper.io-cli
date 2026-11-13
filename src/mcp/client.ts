@@ -8,6 +8,7 @@ import { type Session } from "../auth/session.js";
 import { CliError, EXIT } from "../errors.js";
 import { waiting } from "../net.js";
 import { safeText } from "../output.js";
+import { isRecord } from "../record.js";
 import { VERSION } from "../version.js";
 
 /**
@@ -80,9 +81,9 @@ function generic() {
  * text for anything else, code `internal`). Older servers send no code: then
  * the few exact texts they used are matched, and everything else is generic.
  */
-/** The server appends this to every write error; for the CLI it's misleading or wrong. */
+/** The server appends one of these to a write error; they name MCP tools, so the CLI drops them and says its own next step. */
 const WRITE_SUFFIX =
-  / The change may have completed\. Check get_connection and list_sites before retrying a create request\.$/;
+  / The change may have completed\. (Check get_connection and list_sites before retrying a create request|Call list_members before retrying)\.$/;
 
 export function toolError(
   text: string,
@@ -335,7 +336,7 @@ async function once(
     .map((c) => c.text)
     .join("\n");
   if (result.isError) {
-    const meta = result._meta as Record<string, unknown> | undefined;
+    const meta = isRecord(result._meta) ? result._meta : undefined;
     const code = meta?.[ERROR_CODE_META];
     const wait = meta?.[RETRY_AFTER_META];
     throw toolError(

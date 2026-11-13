@@ -3,6 +3,7 @@ import { CliError, EXIT } from "../errors.js";
 import { callTool } from "../mcp/client.js";
 import { safeText, shellArg, table } from "../output.js";
 import { confirm } from "../prompt.js";
+import { record } from "../record.js";
 import { type CommandContext } from "./context.js";
 import { canChoose } from "./orgs.js";
 import { humanStatus } from "./setup.js";
@@ -35,8 +36,6 @@ export const SITE_TYPES = [
   "other",
 ] as const;
 
-const rec = (v: unknown) =>
-  v && typeof v === "object" ? (v as Record<string, unknown>) : {};
 const str = (v: unknown) => (typeof v === "string" ? v : null);
 
 export async function sitesList(
@@ -197,8 +196,8 @@ export async function sitesStatus(
     ctx.fetcher,
     { signal: ctx.signal },
   );
-  const d = rec(data);
-  const s = rec(d.setup);
+  const d = record(data);
+  const s = record(d.setup);
   const setup: Setup = {
     billing: s.billing === true,
     domainVerified: s.domainVerified === true,
@@ -262,10 +261,10 @@ export async function sitesHealth(
     ctx.fetcher,
     { signal: ctx.signal },
   );
-  const d = rec(data);
-  const c = rec(d.conversions);
-  const today = rec(c.today);
-  const week = rec(c.rolling7Days);
+  const d = record(data);
+  const c = record(d.conversions);
+  const today = record(c.today);
+  const week = record(c.rolling7Days);
   const n = (v: unknown) => (typeof v === "number" ? String(v) : "unknown");
   const asOf =
     typeof c.asOf === "number" ? new Date(c.asOf).toISOString() : null;
@@ -358,7 +357,7 @@ export async function sitesAdd(
     ctx.fetcher,
     { write: true, signal: ctx.signal },
   );
-  const d = rec(data);
+  const d = record(data);
   const websiteId = str(d.websiteId);
   if (!websiteId)
     throw new CliError(

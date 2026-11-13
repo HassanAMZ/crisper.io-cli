@@ -3,6 +3,7 @@ import { CliError, EXIT } from "../errors.js";
 import { callTool } from "../mcp/client.js";
 import { safeText } from "../output.js";
 import { confirm } from "../prompt.js";
+import { record } from "../record.js";
 import type { CommandContext } from "./context.js";
 import { type TargetFlags, resolveSite } from "./target.js";
 
@@ -17,8 +18,6 @@ type Flags = TargetFlags & {
   outgoing?: string;
   collection?: string;
 };
-const record = (value: unknown): Record<string, unknown> =>
-  value && typeof value === "object" ? (value as Record<string, unknown>) : {};
 
 /** Thin MCP client: all eligibility, state and payload handling stays on the server. */
 export async function settingsCommand(

@@ -6,12 +6,11 @@ import { type Session } from "../auth/session.js";
 import { CliError, EXIT } from "../errors.js";
 import { callTool } from "../mcp/client.js";
 import { safeText, shellArg, table } from "../output.js";
+import { record } from "../record.js";
 import { type CommandContext } from "./context.js";
 import { EVENT_TYPES } from "./setup.js";
 import { type TargetFlags, resolveSite } from "./target.js";
 
-const rec = (v: unknown) =>
-  v && typeof v === "object" ? (v as Record<string, unknown>) : {};
 const str = (v: unknown) => (typeof v === "string" ? v : null);
 
 export type WindowFlags = TargetFlags & { since: string; until?: string };
@@ -99,8 +98,8 @@ export async function logsList(
     ctx.fetcher,
     { signal: ctx.signal },
   );
-  const d = rec(data);
-  const events = Array.isArray(d.events) ? d.events.map(rec) : [];
+  const d = record(data);
+  const events = Array.isArray(d.events) ? d.events.map(record) : [];
   const next = str(d.nextCursor);
   return {
     data,
@@ -129,9 +128,9 @@ export async function logsList(
                 [str(e.source), str(e.medium)].filter(Boolean).join(" / "),
                 money(e),
                 str(e.visitor) ?? "",
-                str(rec(e.contact).email) ?? "",
-                str(rec(e.contact).phone) ?? "",
-                str(rec(e.contact).ip) ?? "",
+                str(record(e.contact).email) ?? "",
+                str(record(e.contact).phone) ?? "",
+                str(record(e.contact).ip) ?? "",
               ]),
             ])
           : `No requests on ${safeText(site.domain)} in this window.`,
@@ -251,8 +250,8 @@ export async function logsExport(
         ctx.fetcher,
         { signal: ctx.signal },
       );
-      const d = rec(data);
-      const events = Array.isArray(d.events) ? d.events.map(rec) : [];
+      const d = record(data);
+      const events = Array.isArray(d.events) ? d.events.map(record) : [];
       rows.push(...events);
       partial ||= d.partial === true;
       const next = str(d.nextCursor);
@@ -314,7 +313,7 @@ export async function logsExport(
           ...rows.map((r) =>
             CSV_COLUMNS.map((c) =>
               csvCell(
-                c.endsWith("Masked") ? rec(r.contact)[c.slice(0, -6)] : r[c],
+                c.endsWith("Masked") ? record(r.contact)[c.slice(0, -6)] : r[c],
               ),
             ).join(","),
           ),
@@ -460,11 +459,11 @@ export async function logsStats(
     ctx.fetcher,
     { signal: ctx.signal },
   );
-  const d = rec(data);
-  const rows = Array.isArray(d.rows) ? d.rows.map(rec) : [];
-  const coverage = rec(d.coverage);
+  const d = record(data);
+  const rows = Array.isArray(d.rows) ? d.rows.map(record) : [];
+  const coverage = record(d.coverage);
   const value = (v: unknown) =>
-    Object.entries(rec(v))
+    Object.entries(record(v))
       .map(([currency, n]) => `${safeText(n)} ${safeText(currency)}`)
       .join(", ");
   return {
@@ -483,7 +482,7 @@ export async function logsStats(
             ])
           : `No purchases or leads on ${safeText(site.domain)} in this window.`,
         "",
-        `Total: ${safeText(rec(d.totals).count)}${value(rec(d.totals).value) ? ` (${value(rec(d.totals).value)})` : ""}. Days in ${safeText(d.timezone)}.`,
+        `Total: ${safeText(record(d.totals).count)}${value(record(d.totals).value) ? ` (${value(record(d.totals).value)})` : ""}. Days in ${safeText(d.timezone)}.`,
         coverage.complete === true
           ? `Complete to ${safeText(coverage.to)}.`
           : "Counts are a minimum: the window starts before Crisper's saved copy, the 15-minute poll hasn't run since it began, or it was too large to read whole.",
@@ -507,11 +506,11 @@ export async function logsDrop(
     ctx.fetcher,
     { signal: ctx.signal },
   );
-  const d = rec(data);
+  const d = record(data);
   const summary = Array.isArray(d.summary)
     ? d.summary.filter((line): line is string => typeof line === "string")
     : [];
-  const days = Array.isArray(d.days) ? d.days.map(rec) : [];
+  const days = Array.isArray(d.days) ? d.days.map(record) : [];
   return {
     data,
     context: { orgId, siteId: site.websiteId },

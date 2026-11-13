@@ -1,4 +1,5 @@
 import { CliError, EXIT } from "../errors.js";
+import { isRecord } from "../record.js";
 
 /**
  * Everything the CLI needs to sign in comes from two public documents: the
@@ -52,8 +53,8 @@ async function fetchJson(
   if (!response.ok)
     throw invalid(`${new URL(url).pathname} answered ${response.status}`);
   const body: unknown = await response.json().catch(() => null);
-  if (!body || typeof body !== "object") throw invalid("not JSON");
-  return body as Record<string, unknown>;
+  if (!isRecord(body)) throw invalid("not JSON");
+  return body;
 }
 
 function sameOrigin(url: unknown, issuer: string): url is string {
