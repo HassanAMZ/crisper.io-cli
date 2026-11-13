@@ -3,6 +3,7 @@ import { CliError, EXIT } from "../errors.js";
 import { callTool } from "../mcp/client.js";
 import { type Envelope, safeText, shellArg, table } from "../output.js";
 import { confirm } from "../prompt.js";
+import { isRecord, record } from "../record.js";
 import { type CommandContext } from "./context.js";
 import { siteAfterChoosingOrg } from "./target.js";
 
@@ -42,8 +43,8 @@ export async function fetchOrganizations(
     );
   const list = (data as { organizations: unknown[] }).organizations;
   const organizations = list.flatMap((item): Organization[] => {
-    if (!item || typeof item !== "object") return [];
-    const o = item as Record<string, unknown>;
+    if (!isRecord(item)) return [];
+    const o = item;
     if (typeof o.orgId !== "string") return [];
     return [
       {
@@ -275,7 +276,7 @@ export async function orgsCreate(
       throw unconfirmed();
     throw error;
   }
-  const d = (data ?? {}) as Record<string, unknown>;
+  const d = record(data);
   const orgId = typeof d.orgId === "string" ? d.orgId : null;
   if (!orgId) throw unconfirmed();
   const orgName = typeof d.name === "string" ? d.name : name;

@@ -3,11 +3,10 @@ import { CliError, EXIT } from "../errors.js";
 import { callTool } from "../mcp/client.js";
 import { safeScript, safeText, shellArg, table } from "../output.js";
 import { confirm } from "../prompt.js";
+import { record } from "../record.js";
 import { type CommandContext } from "./context.js";
 import { type TargetFlags, resolveSite } from "./target.js";
 
-const rec = (v: unknown) =>
-  v && typeof v === "object" ? (v as Record<string, unknown>) : {};
 const str = (v: unknown) => (typeof v === "string" ? v : null);
 /** An ISO time from the server as `2026-11-05 21:08 UTC`; anything else (a plain date) as sent. */
 export const utcMinute = (v: unknown) => {
@@ -38,7 +37,7 @@ async function siteCall(
     ctx.fetcher,
     { write, signal: ctx.signal },
   );
-  return { orgId, site, d: rec(data), data };
+  return { orgId, site, d: record(data), data };
 }
 
 /** `--org … --site …` for a suggested command, so it acts on the same website whatever is saved. */
@@ -61,7 +60,7 @@ const DNS_STATE: Record<string, string> = {
 };
 
 function dnsHuman(d: Record<string, unknown>) {
-  const records = Array.isArray(d.records) ? d.records.map(rec) : [];
+  const records = Array.isArray(d.records) ? d.records.map(record) : [];
   const state = str(d.state) ?? "unknown";
   const lines = [
     `Tracking domain: ${safeText(d.trackingDomain ?? "not created")}`,
@@ -194,16 +193,16 @@ export async function installSnippet(
   return {
     data,
     human: () => {
-      const steps = Array.isArray(d.steps) ? d.steps.map(rec) : [];
+      const steps = Array.isArray(d.steps) ? d.steps.map(record) : [];
       const app = d.installPath === "app" && steps.length > 0;
       const lines = [
         `${safeText(d.platformLabel ?? d.platform ?? "")}: ${app ? "install with the Stape app" : "paste the scripts"}`,
       ];
       steps.forEach((s, i) => {
         lines.push("", `${i + 1}. ${safeText(s.title)} (${safeText(s.where)})`);
-        for (const v of Array.isArray(s.values) ? s.values.map(rec) : [])
+        for (const v of Array.isArray(s.values) ? s.values.map(record) : [])
           lines.push(`   ${safeText(v.field)}: ${safeText(v.value ?? "")}`);
-        for (const n of Array.isArray(s.notes) ? s.notes.map(rec) : [])
+        for (const n of Array.isArray(s.notes) ? s.notes.map(record) : [])
           lines.push(`   ${safeText(n.label)}: ${safeText(n.text)}`);
         for (const t of Array.isArray(s.turnOn) ? s.turnOn : [])
           lines.push(`   Turn on: ${safeText(t)}`);
@@ -324,15 +323,15 @@ export async function eventsList(
   return {
     data,
     human: () => {
-      const events = Array.isArray(d.events) ? d.events.map(rec) : [];
+      const events = Array.isArray(d.events) ? d.events.map(record) : [];
       if (!events.length)
         return `No saved events for ${safeText(site.domain)} yet. Saved ${safeText(d.savedAt ?? "never")}.`;
       const delivery = (e: Record<string, unknown>) => {
         if (!e.delivery) return "";
-        const del = rec(e.delivery);
+        const del = record(e.delivery);
         if (del.status === "gap")
           return `gap: ${(Array.isArray(del.missing)
-            ? del.missing.map(rec)
+            ? del.missing.map(record)
             : []
           )
             .map((m) => `${safeText(m.integration)} ${safeText(m.kind)}`)
@@ -442,14 +441,14 @@ export async function eventsVerify(
       if (ctx.signal.aborted) throw interrupted();
       last = data;
       lastError = null;
-      const d = rec(data);
+      const d = record(data);
       const checkedAt = Date.parse(str(d.checkedAt) ?? "");
       if (Number.isFinite(checkedAt)) skew = checkedAt - sentAt;
       // The window is `since` minutes before the start, on the server's clock.
       // Never the answer's own `since`: a request widened after a failed first
       // poll reaches further back than the customer asked.
       if (cutoff === null) cutoff = started + skew - since * 60_000;
-      const latest = rec(d.latest);
+      const latest = record(d.latest);
       const latestAt = Date.parse(str(latest.time) ?? "");
       // An event from before the window (a widened request reached it) doesn't count.
       const inWindow = !Number.isFinite(latestAt) || latestAt >= cutoff;
@@ -545,7 +544,7 @@ export async function integrationsList(
     data,
     human: () => {
       const items = Array.isArray(d.integrations)
-        ? d.integrations.map(rec)
+        ? d.integrations.map(record)
         : [];
       const more =
         d.truncated === true
@@ -641,6 +640,14 @@ export async function integrationsConnect(
       "microsoft_ads",
       "linkedin",
       "pinterest",
+      "openai",
+      "reddit",
+      "quora",
+      "nextdoor",
+      "yelp",
+      "adroll",
+      "amazon",
+      "spotify",
     ].includes(platform)
   )
     throw new CliError(
@@ -741,7 +748,7 @@ export async function integrationsConnect(
     ctx.fetcher,
     { write: true, signal: ctx.signal },
   );
-  let d = rec(data);
+  let d = record(data);
   if (d.status === "confirmation_required") {
     if (typeof d.confirmation !== "string")
       throw new CliError(
@@ -770,7 +777,7 @@ export async function integrationsConnect(
       ctx.fetcher,
       { write: true, signal: ctx.signal },
     ));
-    d = rec(data);
+    d = record(data);
   }
   if (!["connected", "updated", "already_connected"].includes(String(d.status)))
     throw new CliError(
@@ -895,7 +902,7 @@ export async function billingCancel(
     ctx.fetcher,
     { write: true, signal: ctx.signal },
   );
-  const d = rec(data);
+  const d = record(data);
   if (d.status !== "cancel_requested" && d.status !== "already_scheduled")
     throw withData(
       new CliError(

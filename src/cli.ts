@@ -13,7 +13,13 @@ import {
   defaultContext,
   sessionOf,
 } from "./commands/context.js";
-import { logsExport, logsList, logsStats } from "./commands/logs.js";
+import {
+  KEY_EVENTS_TOOLS,
+  type KeyEventsOperation,
+  keyEventsCommand,
+} from "./commands/key-events.js";
+import { type MembersRequest, membersCommand } from "./commands/members.js";
+import { logsDrop, logsExport, logsList, logsStats } from "./commands/logs.js";
 import {
   orgsCreate,
   orgsList,
@@ -255,6 +261,57 @@ export function createProgram(deps: ProgramDeps = {}): {
         orgsCreate(ctx, await sessionOf(ctx), name, flags),
       ),
     );
+
+  const members = program
+    .command("members")
+    .description(
+      "people in an organization: invite, revoke invites, change roles (organization admins)",
+    );
+  const orgOption = (cmd: Command) =>
+    cmd.option("--org <orgId>", "organization (default: `crisper orgs use`)");
+  const membersRun =
+    (name: string, request: (flags: { org?: string }) => MembersRequest) =>
+    (flags: { org?: string }) =>
+      run(name, argvForRun, async (ctx) =>
+        membersCommand(ctx, await sessionOf(ctx), flags, request(flags)),
+      );
+  orgOption(
+    members.command("list").description("list members and pending invites"),
+  ).action(membersRun("members list", () => ({ operation: "list" })));
+  orgOption(
+    members
+      .command("invite <emails...>")
+      .description(
+        "invite up to 10 people by email; they join as Members unless --admin (final, no confirmation)",
+      )
+      .option("--admin", "invite them as Admins", false),
+  ).action((emails: string[], flags: { org?: string; admin: boolean }) =>
+    membersRun("members invite", () => ({
+      operation: "invite",
+      emails,
+      admin: flags.admin,
+    }))(flags),
+  );
+  orgOption(
+    members
+      .command("revoke <target>")
+      .description("withdraw a pending invite, by email or invitation ID"),
+  ).action((target: string, flags: { org?: string }) =>
+    membersRun("members revoke", () => ({ operation: "revoke", target }))(
+      flags,
+    ),
+  );
+  orgOption(
+    members
+      .command("role <target> <role>")
+      .description(
+        "make a member (email or user ID) an admin or a member; never your own role",
+      ),
+  ).action((target: string, role: string, flags: { org?: string }) =>
+    membersRun("members role", () => ({ operation: "role", target, role }))(
+      flags,
+    ),
+  );
 
   // Every site command takes the same two selectors.
   type Target = { org?: string; site?: string };
@@ -517,7 +574,7 @@ export function createProgram(deps: ProgramDeps = {}): {
     logs
       .command("stats")
       .description(
-        "purchases and leads counted and summed per day, event, source, medium or client (last 12 days)",
+        "purchases and leads counted and summed per day, event, source, medium or client (last 90 days)",
       ),
     "end (default: now)",
   )
@@ -530,6 +587,15 @@ export function createProgram(deps: ProgramDeps = {}): {
     .action((flags: Window & { by?: string; type?: string }) =>
       run("logs stats", argvForRun, (ctx) => signedIn(logsStats)(ctx, flags)),
     );
+  withSite(
+    logs
+      .command("drop")
+      .description(
+        "why leads dropped: the day it started, and platforms, sources and alerts before and after (last 12 days)",
+      ),
+  ).action((flags: Target) =>
+    run("logs drop", argvForRun, (ctx) => signedIn(logsDrop)(ctx, flags)),
+  );
 
   for (const group of ["settings", "alerts"] as const) {
     const parent = program
@@ -580,6 +646,82 @@ export function createProgram(deps: ProgramDeps = {}): {
         ),
       );
     }
+  }
+  const keyEvents = program
+    .command("key-events")
+    .description(
+      "the events each website counts as conversions, and what new websites start on",
+    )
+    .addHelpText(
+      "after",
+      "\nKey events: Purchase, GenerateLead (Lead), SubmitApplication, SignUp, Login. Pick one or two; Lead and SubmitApplication can't be picked together. Changes need an organization admin, a preview and approval.\n",
+    );
+  const keyEventsCommands: {
+    operation: KeyEventsOperation;
+    description: string;
+    org: boolean;
+  }[] = [
+    { operation: "get", description: "a website's key events", org: false },
+    {
+      operation: "update",
+      description: "change a website's key events",
+      org: false,
+    },
+    {
+      operation: "default",
+      description: "the key events new websites start on",
+      org: true,
+    },
+    {
+      operation: "set-default",
+      description: "set what new websites start on; existing ones keep theirs",
+      org: true,
+    },
+    {
+      operation: "apply",
+      description:
+        "save the same key events on many websites (all unless --sites)",
+      org: true,
+    },
+  ];
+  for (const { operation, description, org } of keyEventsCommands) {
+    const command = keyEvents.command(operation).description(description);
+    const node = org
+      ? command.option(
+          "--org <orgId>",
+          "organization (default: `crisper orgs use`)",
+        )
+      : withSite(command);
+    if (operation === "apply")
+      node
+        .option(
+          "--sites <sites>",
+          "comma-separated websiteIds or domains (default: every website)",
+        )
+        .option("--new-sites", "also make these what new websites start on");
+    if (KEY_EVENTS_TOOLS[operation].startsWith("update_"))
+      node
+        .requiredOption(
+          "--events <events>",
+          "one or two key events, comma-separated, e.g. Purchase,SubmitApplication",
+        )
+        .option(
+          "--preview",
+          "return the change and confirmation without saving",
+          false,
+        )
+        .option(
+          "--confirmation <nonce>",
+          "nonce from the reviewed preview; resend identical input",
+        )
+        .option("--yes", "approve only the supplied --confirmation", false);
+    node.action((flags) =>
+      run(`key-events ${operation}`, argvForRun, (ctx) =>
+        signedIn((c, session) =>
+          keyEventsCommand(c, session, flags, operation),
+        )(ctx, flags),
+      ),
+    );
   }
   for (const operation of ["resend-options", "resend"] as const) {
     const node = withSite(
@@ -633,7 +775,7 @@ export function createProgram(deps: ProgramDeps = {}): {
     .description("Meta, TikTok and other platforms")
     .addHelpText(
       "after",
-      `\nConfiguration JSON fields (hidden prompt or --configuration-stdin only):\n  meta, tiktok, snapchat: pixelId, capiToken\n  ga4: measurementId, optional apiSecret (omission preserves the saved secret on update)\n  gads: conversionId (AW- number), purchase label, optional event labels\n  twitter: pixelId, accessToken, purchase event ID, optional event IDs\n  microsoft_ads: uetTagId, capiToken\n  linkedin: accessToken and at least one event conversion ID\n  pinterest: advertiserId, capiToken (existing integrations only)\nEvent keys: purchase, generateLead, addToCart, beginCheckout, addPaymentInfo, addShippingInfo, pageView, viewCart, viewItem.\nUpdates replace the full event mapping; omitted events are removed. Credentials affect all sites sharing the integration.\nUse integrations link for browser setup guidance. Saving manual configuration does not grant OAuth access or prove delivery.\n`,
+      `\nConfiguration JSON fields (hidden prompt or --configuration-stdin only):\n  meta, tiktok, snapchat: pixelId, capiToken\n  ga4: measurementId, optional apiSecret (omission preserves the saved secret on update)\n  gads: conversionId (AW- number), purchase label, optional event labels\n  twitter: pixelId, accessToken, purchase event ID, optional event IDs\n  microsoft_ads: uetTagId, capiToken\n  linkedin: accessToken and at least one event conversion ID\n  pinterest: advertiserId, capiToken\n  openai (beta): pixelId, apiKey\n  reddit (beta): pixelId, accessToken\n  quora (beta): accountId, accessToken\n  nextdoor (beta): pixelId, clientId, accessToken\n  yelp (beta): accessToken, adAccountId (optional)\n  adroll (beta): advertisableId, pixelId, accessToken\n  amazon (beta): tagId, region (optional; NA or EU, default NA)\n  spotify (beta): connectionId, authToken\nEvent keys: purchase, generateLead, addToCart, beginCheckout, addPaymentInfo, addShippingInfo, pageView, viewCart, viewItem.\nUpdates replace the full event mapping; omitted events are removed. Credentials affect all sites sharing the integration.\nUse integrations link for browser setup guidance. Saving manual configuration does not grant OAuth access or prove delivery.\n`,
     );
   withSite(
     integrations
@@ -668,7 +810,7 @@ export function createProgram(deps: ProgramDeps = {}): {
         )
         .option(
           "--platform <platform>",
-          "meta, tiktok, snapchat, twitter, ga4, gads, microsoft_ads, linkedin; pinterest existing-only",
+          "meta, tiktok, snapchat, twitter, ga4, gads, microsoft_ads, linkedin, pinterest, openai, reddit, quora, nextdoor, yelp, adroll, amazon, spotify",
         )
         .option(
           "--integration <id>",

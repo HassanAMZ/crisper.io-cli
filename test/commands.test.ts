@@ -2178,10 +2178,10 @@ describe("0.0.7: parity commands, one MCP session, clearer errors", () => {
     expect(h.json()).toMatchObject({
       command: "version",
       ok: true,
-      data: { version: "0.0.12" },
+      data: { version: "0.0.13" },
     });
     expect(await h.run("--version")).toBe(0);
-    expect(h.out).toEqual(["0.0.12"]);
+    expect(h.out).toEqual(["0.0.13"]);
   });
 
   it("billing cancel shows the period end as a UTC minute, not raw ISO", async () => {
@@ -2407,13 +2407,22 @@ describe("0.0.7 council round 1", () => {
       "update_site_settings",
       "update_alert_settings",
       "resend_event",
+      "update_key_events",
+      "update_new_site_key_events",
+      "update_key_events_for_sites",
     ])
       h.tools[tool] = () => ({
         result: { ...site, status: "updated", note: "saved" },
       });
+    const E = ["--events", "Purchase,SubmitApplication", "--yes"];
     const argv: Record<string, string[]> = {
       "settings get": ["settings", "get", ...S],
       "settings update": ["settings", "update", ...S, "--yes"],
+      "key-events get": ["key-events", "get", ...S],
+      "key-events update": ["key-events", "update", ...S, ...E],
+      "key-events default": ["key-events", "default"],
+      "key-events set-default": ["key-events", "set-default", ...E],
+      "key-events apply": ["key-events", "apply", ...E],
       "alerts get": ["alerts", "get", ...S],
       "alerts update": ["alerts", "update", ...S, "--yes"],
       "logs resend-options": ["logs", "resend-options", ...S, "--log", "l1"],
@@ -2430,6 +2439,10 @@ describe("0.0.7 council round 1", () => {
       "orgs list": ["orgs", "list"],
       "orgs use": ["orgs", "use", "org_0000000001"],
       "orgs create": ["orgs", "create", "Acme", "--yes"],
+      "members list": ["members", "list"],
+      "members invite": ["members", "invite", "a@example.com"],
+      "members revoke": ["members", "revoke", "a@example.com"],
+      "members role": ["members", "role", "a@example.com", "admin"],
       "sites list": ["sites", "list"],
       "sites use": ["sites", "use", "clinic.com"],
       "sites status": ["sites", "status", ...S],
@@ -2474,6 +2487,7 @@ describe("0.0.7 council round 1", () => {
         "--force",
       ],
       "logs stats": ["logs", "stats", ...S, "--since", "7d"],
+      "logs drop": ["logs", "drop", ...S],
       "integrations connect": [
         "integrations",
         "connect",
@@ -2857,6 +2871,34 @@ describe("0.0.8: logs list, export and stats", () => {
         "pageview",
       ),
     ).toBe(2);
+  });
+
+  it("logs drop sends the site and reads out the summary and each day, unknown as unknown", async () => {
+    h.tools.get_lead_drop = () => ({
+      result: {
+        ...site,
+        timezone: "UTC",
+        days: [
+          { date: "2026-11-07", leads: null },
+          { date: "2026-11-08", leads: 2 },
+        ],
+        verdict: { kind: "dropped" },
+        summary: [
+          "Leads dropped 80% starting 2026-11-03.",
+          "Meta: 0 failed and 0 not sent a day before, 2 failed and 0 not sent after.",
+        ],
+      },
+    });
+    expect(await h.run("logs", "drop", "--site", "clinic.com")).toBe(0);
+    expect(h.calls.at(-1)).toEqual({
+      name: "get_lead_drop",
+      args: { websiteId: "w1" },
+    });
+    const out = h.out.join("\n");
+    expect(out).toContain("Leads dropped 80% starting 2026-11-03.");
+    expect(out).toContain("2 failed and 0 not sent after");
+    expect(out).toMatch(/2026-11-07\s+unknown/);
+    expect(out).toMatch(/2026-11-08\s+2/);
   });
 
   it("logs export keeps going through many rate limits, one at a time", async () => {
@@ -3316,5 +3358,267 @@ describe("slice 3 confirmed settings and Logs re-send", () => {
       ),
     ).toBe(2);
     expect(h.calls.some((c) => c.name === "resend_event")).toBe(false);
+  });
+});
+
+describe("TASK-405 key events", () => {
+  let h: ReturnType<typeof harness>;
+  beforeEach(async () => {
+    h = harness();
+    await h.init();
+    h.tools.get_connection = () => ({
+      result: { connected: true, organizations: [ORG], instructions: "" },
+    });
+    h.tools.list_sites = () => ({
+      result: { orgId: ORG.orgId, sites: SITES, truncated: false },
+    });
+  });
+  it("apply sends the chosen sites as websiteIds and asks to include new sites", async () => {
+    h.tools.update_key_events_for_sites = (args) => ({
+      result: args.confirmation
+        ? { orgId: ORG.orgId, status: "updated", note: "saved", total: 1 }
+        : {
+            orgId: ORG.orgId,
+            status: "confirmation_required",
+            confirmation: "nonce-K",
+            changes: { siteCount: 1 },
+            note: "Alerts restart learning",
+          },
+    });
+    expect(
+      await h.run(
+        "key-events",
+        "apply",
+        "--org",
+        ORG.orgId,
+        "--events",
+        "Purchase, SubmitApplication",
+        "--sites",
+        "https://www.shop.clinic.com/",
+        "--new-sites",
+        "--preview",
+        "--json",
+      ),
+    ).toBe(0);
+    const preview = h.calls.find(
+      (c) => c.name === "update_key_events_for_sites",
+    )!.args;
+    expect(preview).toEqual({
+      orgId: ORG.orgId,
+      keyEvents: ["Purchase", "SubmitApplication"],
+      websiteIds: ["w2"],
+      includeNewSites: true,
+    });
+    expect(h.json().data.confirmation).toBe("nonce-K");
+    expect(h.err.join("\n")).toContain("Alerts restart learning");
+  });
+  it("refuses a site outside the organization before calling the tool", async () => {
+    expect(
+      await h.run(
+        "key-events",
+        "apply",
+        "--org",
+        ORG.orgId,
+        "--events",
+        "Purchase",
+        "--sites",
+        "elsewhere.com",
+        "--json",
+      ),
+    ).toBe(2);
+    expect(h.json().error.message).toContain("No website elsewhere.com");
+    expect(h.calls.some((c) => c.name === "update_key_events_for_sites")).toBe(
+      false,
+    );
+  });
+  it("a member who is not an admin gets ACCESS_DENIED", async () => {
+    h.tools.update_new_site_key_events = () => ({
+      error: "Only an organization admin can change key events.",
+      code: "admin_required",
+    });
+    expect(
+      await h.run(
+        "key-events",
+        "set-default",
+        "--org",
+        ORG.orgId,
+        "--events",
+        "Login",
+        "--preview",
+        "--json",
+      ),
+    ).toBe(4);
+    expect(h.json().error.code).toBe("ACCESS_DENIED");
+  });
+  it("get reads one website's key events", async () => {
+    h.tools.get_key_events = () => ({
+      result: { ...SITES[0], keyEvents: ["Purchase"], label: "Purchase" },
+    });
+    expect(
+      await h.run("key-events", "get", "--site", "clinic.com", "--json"),
+    ).toBe(0);
+    expect(h.calls.at(-1)).toEqual({
+      name: "get_key_events",
+      args: { websiteId: "w1" },
+    });
+  });
+});
+
+describe("TASK-643 members", () => {
+  let h: ReturnType<typeof harness>;
+  const note =
+    "People were added as Members. To make someone an Admin, call set_member_role.";
+  beforeEach(async () => {
+    h = harness();
+    await h.init();
+    h.tools.get_connection = () => ({
+      result: { connected: true, organizations: [ORG], instructions: "" },
+    });
+  });
+
+  it("invite sends every email as a Member by default and prints one line each, then the note", async () => {
+    h.tools.invite_member = (args) => ({
+      result: {
+        orgId: ORG.orgId,
+        role: "org:member",
+        invited: 1,
+        results: [
+          {
+            email: "a@example.com",
+            status: "invited",
+            invitationId: "inv_1",
+            role: "org:member",
+          },
+          {
+            email: "b@example.com",
+            status: "already_invited",
+            invitationId: "inv_2",
+            role: "org:member",
+          },
+        ],
+        note,
+        echo: args,
+      },
+    });
+    expect(
+      await h.run("members", "invite", "a@example.com", "b@example.com"),
+    ).toBe(0);
+    expect(h.calls.at(-1)).toEqual({
+      name: "invite_member",
+      args: {
+        orgId: ORG.orgId,
+        emails: ["a@example.com", "b@example.com"],
+        role: "member",
+      },
+    });
+    const out = h.out.join("\n");
+    expect(out).toContain("a@example.com: invited");
+    expect(out).toContain("b@example.com: already_invited");
+    expect(out).toContain(note);
+  });
+
+  it("invite --admin asks for Admin, and --json mirrors the tool output", async () => {
+    h.tools.invite_member = () => ({
+      result: {
+        orgId: ORG.orgId,
+        role: "org:admin",
+        invited: 0,
+        results: [],
+        note,
+      },
+    });
+    expect(
+      await h.run("members", "invite", "a@example.com", "--admin", "--json"),
+    ).toBe(0);
+    expect(h.calls.at(-1)!.args.role).toBe("admin");
+    expect(h.json().data).toEqual({
+      orgId: ORG.orgId,
+      role: "org:admin",
+      invited: 0,
+      results: [],
+      note,
+    });
+  });
+
+  it("revoke and role send an email or an ID in the field the server reads", async () => {
+    h.tools.revoke_invite = () => ({
+      result: { orgId: ORG.orgId, status: "not_pending", target: "x", note },
+    });
+    h.tools.set_member_role = () => ({
+      result: { orgId: ORG.orgId, status: "unchanged", note },
+    });
+    await h.run("members", "revoke", "orginv_123");
+    expect(h.calls.at(-1)!.args).toEqual({
+      orgId: ORG.orgId,
+      invitationId: "orginv_123",
+    });
+    await h.run("members", "revoke", "a@example.com");
+    expect(h.calls.at(-1)!.args).toEqual({
+      orgId: ORG.orgId,
+      email: "a@example.com",
+    });
+    await h.run("members", "role", "user_9", "Admin");
+    expect(h.calls.at(-1)!.args).toEqual({
+      orgId: ORG.orgId,
+      userId: "user_9",
+      role: "admin",
+    });
+  });
+
+  it("invite with 11 emails prints Crisper's own limit message, not a schema error", async () => {
+    const message =
+      "Use 1 to 10 emails per call; send a longer list in several calls.";
+    h.tools.invite_member = () => ({
+      error: message,
+      code: "invalid_argument",
+    });
+    const emails = Array.from({ length: 11 }, (_, i) => `p${i}@example.com`);
+    expect(await h.run("members", "invite", ...emails, "--json")).toBe(2);
+    expect(h.calls.at(-1)!.args.emails).toEqual(emails);
+    expect(h.json().error).toMatchObject({
+      code: "INVALID_ARGUMENT",
+      message,
+    });
+  });
+
+  it("revoke prints the server's next step as sent, with its crisper command", async () => {
+    const serverNote =
+      "No pending invitation matches; nothing was changed. It may have been accepted or revoked already: call list_members (CLI: `crisper members list`).";
+    h.tools.revoke_invite = () => ({
+      result: {
+        orgId: ORG.orgId,
+        status: "not_pending",
+        target: "a@example.com",
+        note: serverNote,
+      },
+    });
+    expect(await h.run("members", "revoke", "a@example.com")).toBe(0);
+    expect(h.out.join("\n")).toBe(`not_pending\n\n${serverNote}`);
+  });
+
+  it("refuses a role other than member or admin before calling the tool", async () => {
+    h.tools.set_member_role = () => ({ result: { status: "updated" } });
+    expect(
+      await h.run("members", "role", "a@example.com", "owner", "--json"),
+    ).toBe(2);
+    expect(h.calls.some((c) => c.name === "set_member_role")).toBe(false);
+  });
+
+  it("a member write the server could not confirm points at members list", async () => {
+    h.tools.set_member_role = () => ({
+      // As lib/mcp/server.ts sends it to every MCP client.
+      error:
+        "Member change could not be confirmed: Clerk gave no clear answer. The change may have completed. Call list_members before retrying.",
+      code: "failed",
+    });
+    expect(
+      await h.run("members", "role", "a@example.com", "admin", "--json"),
+    ).toBe(8);
+    expect(h.json().error).toMatchObject({
+      code: "WRITE_UNCONFIRMED",
+      message:
+        "Member change could not be confirmed: Clerk gave no clear answer.",
+      next: "Run `crisper members list` before trying again.",
+    });
   });
 });

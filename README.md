@@ -26,6 +26,7 @@ npx crisperio --json orgs list   # one JSON object on stdout, progress on stderr
 
 ## For AI agents
 
+Version 0.0.13 adds people to an organization: `members invite <email...>` (up to 10; Members unless `--admin`), `members list`, `members revoke <email|invitationId>` and `members role <email|userId> <member|admin>`. An organization admin's request is the approval, so these run without `--yes`; each email gets a result, and a failed one says whether and when to run it again. It also ships the commands added since 0.0.12: `logs drop` (why leads dropped), `key-events get|update|default|set-default|apply`, and the beta ad platforms in `integrations connect`.
 Version 0.0.9 makes `logs export` write its temporary file under a random name it creates itself, so it never writes through a file someone else placed there.
 Version 0.0.8 pulls your data: `logs list` (requests in a date range, with filters and a cursor), `logs export` (to an NDJSON or CSV file, up to `--max-pages` pages of 100; `--cursor` resumes) and `logs stats` (purchases and leads counted and summed per day, source and more).
 Version 0.0.7 gave every Crisper MCP tool a command (`orgs create`,
@@ -87,10 +88,15 @@ is unconfirmed: check status before retrying.
 | `crisper integrations link`                                                              | The dashboard page for provider setup guidance and browser secret entry.                                                                                                                                                                                     |
 | `crisper events list`, `events verify --type purchase --wait 5`                          | Recent events; check that a test purchase or lead arrived.                                                                                                                                                                                                   |
 | `crisper logs list --since 24h`, `logs export --since 7d --output logs.csv --format csv` | Requests in a time window (last 10 days), filtered by `--event`, `--client`, `--status`; export writes up to `--max-pages` pages to a file and says how to resume. Masked contacts only: email first letter + *** + domain, phone last four, IP first block. |
-| `crisper logs stats --since 7d --by day,source`                                          | Purchases and leads counted and summed per day, event, source, medium or client (last 12 days).                                                                                                                                                              |
+| `crisper logs stats --since 7d --by day,source`                                          | Purchases and leads counted and summed per day, event, source, medium or client (last 90 days).                                                                                                                                                              |
+| `crisper logs drop`                                                                      | Why leads dropped: the day it started in the last 12 days, and delivery per platform, sources and alerts before and after. Unknown days stay unknown, never zero.                                                                                            |
+| `crisper key-events get`, `key-events default`                                           | A website's key events (what it counts as conversions); what new websites start on.                                                                                                                                                                          |
+| `crisper key-events update`, `set-default`, `apply --sites a.com,b.com --new-sites`      | Organization admins: change one website, what new websites start on, or many websites at once (all unless `--sites`). Preview first, then approve.                                                                                                           |
+| `crisper members list`, `members invite <email...> [--admin]`                            | Organization admins: members and pending invites; invite up to 10 people as Members (Admins with `--admin`). No confirmation; a failed email says whether and when to run it again.                                                                          |
+| `crisper members revoke <email or id>`, `members role <email or id> <member or admin>`   | Organization admins: withdraw a pending invite; make a member an Admin or a Member (never your own role, never the last admin).                                                                                                                              |
 | `crisper logout`                                                                         | Revokes the sign-in and forgets it.                                                                                                                                                                                                                          |
 
-Site commands take `--org <orgId>` and `--site <domain or id>`. `orgs create`, `sites add`, `billing cancel`, `integrations connect`, and `integrations update` ask for a typed yes in human interactive mode, or require `--yes` after approval in scripts.
+Site commands take `--org <orgId>` and `--site <domain or id>`. `orgs create`, `sites add`, `billing cancel`, `integrations connect`, `integrations update`, `key-events update`, `key-events set-default` and `key-events apply` ask for a typed yes in human interactive mode, or require `--yes` after approval in scripts.
 
 Add `--json` before the command for a single machine-readable envelope: `schemaVersion`, `command`, `ok`, `context`, `data`, `error`, `meta`. Exit codes: 0 ok, 1 failure, 2 usage, 3 not signed in, 4 no access, 5 rate limited, 6 needs your action, 7 unavailable, 8 unconfirmed, 130 interrupted.
 
@@ -126,7 +132,15 @@ For new configurations, use `integrations connect --platform <platform>`. Enter 
 | twitter                | `pixelId`, `accessToken`, `purchase` event ID, optional event IDs                   |
 | microsoft_ads          | `uetTagId`, `capiToken`                                                             |
 | linkedin               | `accessToken`, at least one event conversion ID                                     |
-| pinterest              | `advertiserId`, `capiToken`; existing integrations only                             |
+| openai (beta)          | `pixelId`, `apiKey`; one per site                                                   |
+| reddit (beta)          | `pixelId`, `accessToken`; one per site                                              |
+| quora (beta)           | `accountId`, `accessToken`; one per site                                            |
+| nextdoor (beta)        | `pixelId`, `clientId`, `accessToken`; one per site                                  |
+| yelp (beta)            | `accessToken`, `adAccountId` (optional); one per site                               |
+| adroll (beta)          | `advertisableId`, `pixelId`, `accessToken`; one per site                            |
+| amazon (beta)          | `tagId`, `region` (optional; NA or EU, default NA); one per site                    |
+| spotify (beta)         | `connectionId`, `authToken`; one per site                                           |
+| pinterest              | `advertiserId`, `capiToken`; one per site                                           |
 
 Event keys are `purchase`, `generateLead`, `addToCart`, `beginCheckout`, `addPaymentInfo`, `addShippingInfo`, `pageView`, `viewCart`, `viewItem`. Updates replace the event mapping: omitted events are removed. Omitted/blank GA4 `apiSecret` preserves the existing secret on update. LinkedIn accepts one integration per site. No credential is returned by list or write responses.
 

@@ -3,6 +3,7 @@ import { CliError, EXIT } from "../errors.js";
 import { callTool } from "../mcp/client.js";
 import { safeText } from "../output.js";
 import { confirm } from "../prompt.js";
+import { record } from "../record.js";
 import type { CommandContext } from "./context.js";
 import { type TargetFlags, resolveSite } from "./target.js";
 
@@ -17,8 +18,6 @@ type Flags = TargetFlags & {
   outgoing?: string;
   collection?: string;
 };
-const record = (value: unknown): Record<string, unknown> =>
-  value && typeof value === "object" ? (value as Record<string, unknown>) : {};
 
 /** Thin MCP client: all eligibility, state and payload handling stays on the server. */
 export async function settingsCommand(
@@ -30,12 +29,7 @@ export async function settingsCommand(
   const { site } = await resolveSite(ctx, session, flags);
   const write = tool.startsWith("update_") || tool === "resend_event";
   const input: Record<string, unknown> = { websiteId: site.websiteId };
-  if (flags.confirmation && (flags.preview || !flags.yes))
-    throw new CliError(
-      "INVALID_ARGUMENT",
-      "Use --confirmation with --yes and identical input; do not combine it with --preview.",
-      { exit: EXIT.usage },
-    );
+  approvalFlagsOrThrow(flags);
   if (flags.confirmation) input.confirmation = flags.confirmation;
   if (tool.startsWith("update_")) {
     const raw = flags.inputStdin
@@ -84,6 +78,37 @@ export async function settingsCommand(
     if (flags.outgoing) input.outgoingLogId = flags.outgoing;
     if (flags.collection) input.eventCollection = flags.collection;
   }
+  return callWithApproval(ctx, session, tool, input, flags, write);
+}
+
+type ApprovalFlags = {
+  yes?: boolean;
+  preview?: boolean;
+  confirmation?: string;
+  inputStdin?: boolean;
+};
+
+export function approvalFlagsOrThrow(flags: ApprovalFlags) {
+  if (flags.confirmation && (flags.preview || !flags.yes))
+    throw new CliError(
+      "INVALID_ARGUMENT",
+      "Use --confirmation with --yes and identical input; do not combine it with --preview.",
+      { exit: EXIT.usage },
+    );
+}
+
+/**
+ * Calls a tool; a write's preview is shown and approved (or returned with
+ * --preview) before the same input is sent again with its confirmation.
+ */
+export async function callWithApproval(
+  ctx: CommandContext,
+  session: Session,
+  tool: string,
+  input: Record<string, unknown>,
+  flags: ApprovalFlags,
+  write: boolean,
+) {
   let { data } = await callTool(
     session,
     ctx.config.origin,

@@ -7,8 +7,14 @@ import { VERSION } from "./version.js";
 export const ACCOUNT_CHANGES = [
   "settings update",
   "alerts update",
+  "key-events update",
+  "key-events set-default",
+  "key-events apply",
   "logs resend",
   "orgs create",
+  "members invite",
+  "members revoke",
+  "members role",
   "sites add",
   "billing cancel",
   "integrations connect",
@@ -24,6 +30,17 @@ export const EXAMPLES: Record<string, string[]> = {
   "alerts update": [
     "crisper alerts update --site example.com --input-stdin --yes",
   ],
+  "key-events get": ["crisper key-events get --site example.com --json"],
+  "key-events update": [
+    "crisper key-events update --site example.com --events Purchase,SubmitApplication",
+  ],
+  "key-events default": ["crisper key-events default --json"],
+  "key-events set-default": [
+    "crisper key-events set-default --events Purchase,SubmitApplication",
+  ],
+  "key-events apply": [
+    "crisper key-events apply --events Purchase,SubmitApplication --sites a.com,b.com --new-sites",
+  ],
   "logs resend-options": [
     "crisper logs resend-options --log <id> --at 2026-11-05T00:00:00Z --json",
   ],
@@ -34,6 +51,13 @@ export const EXAMPLES: Record<string, string[]> = {
   "orgs list": ["crisper orgs list --json"],
   "orgs use": ["crisper orgs use", "crisper orgs use org_0123456789 --json"],
   "orgs create": ['crisper orgs create "Acme Agency" --json'],
+  "members list": ["crisper members list --json"],
+  "members invite": [
+    "crisper members invite a@example.com b@example.com --json",
+    "crisper members invite lead@example.com --admin",
+  ],
+  "members revoke": ["crisper members revoke a@example.com --json"],
+  "members role": ["crisper members role a@example.com admin --json"],
   "sites list": ["crisper sites list --json"],
   "sites use": ["crisper sites use", "crisper sites use example.com --json"],
   "sites status": ["crisper sites status --site example.com --json"],
@@ -58,6 +82,7 @@ export const EXAMPLES: Record<string, string[]> = {
   "logs stats": [
     "crisper logs stats --site example.com --since 7d --by day,source --json",
   ],
+  "logs drop": ["crisper logs drop --site example.com --json"],
   "integrations list": ["crisper integrations list --site example.com --json"],
   "integrations link": ["crisper integrations link --site example.com --json"],
   "integrations update": [
