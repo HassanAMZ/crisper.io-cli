@@ -197,7 +197,7 @@ describe("agent command discovery and help", () => {
     },
   );
 
-  it("ships the 0.0.13 agent guidance with a narrowly allowed skill", () => {
+  it("ships the 0.0.14 agent guidance with a narrowly allowed skill", () => {
     const skill = readFileSync("skills/crisper/SKILL.md", "utf8");
     expect(skill).toMatch(/^---\nname: crisper\ndescription: Use when/);
     expect(skill.split("\n").length).toBeLessThanOrEqual(95);
@@ -218,7 +218,7 @@ describe("agent command discovery and help", () => {
     expect(readme).toContain("arrow-key pickers");
     expect(readme).toContain("--timing");
     const pkg = JSON.parse(readFileSync("package.json", "utf8"));
-    expect(pkg.version).toBe("0.0.13");
+    expect(pkg.version).toBe("0.0.14");
     expect(pkg.files).toEqual(["dist", "README.md"]);
   });
 });

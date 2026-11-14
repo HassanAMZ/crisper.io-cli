@@ -3,11 +3,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { ConfigStore, MemoryStore, secretName } from "../src/auth/store.js";
+import { ConfigStore, MemoryStore } from "../src/auth/store.js";
 import { createProgram } from "../src/cli.js";
 import { type CommandContext } from "../src/commands/context.js";
 import { type OutputMode, type Writer } from "../src/output.js";
 import { type Prompter } from "../src/prompt.js";
+import { stored } from "./stored.js";
 
 /**
  * A fake Crisper + Clerk behind one fetch: resource metadata, issuer
@@ -285,9 +286,7 @@ describe("crisper (command contract)", () => {
     expect(everything).not.toContain("device-secret");
     expect(everything).not.toContain("access-");
     expect(everything).not.toContain("refresh-");
-    expect(await h.secrets.get(secretName(ORIGIN, "cid", "access"))).toBe(
-      "access-1",
-    );
+    expect(await stored(h.secrets, "access")).toBe("access-1");
     // Every token request carried the resource and no secret.
     for (const c of h.state.calls.filter((c) => c.url.endsWith("/oauth/token")))
       expect(new URLSearchParams(c.body).get("resource")).toBe(
@@ -299,7 +298,7 @@ describe("crisper (command contract)", () => {
     h.state.mcp = () => ({ status: 403 });
     expect(await h.run("--json", "login", "--no-browser")).toBe(4);
     expect(h.state.revoked).toEqual(["refresh_token", "access_token"]);
-    expect(await h.secrets.get(secretName(ORIGIN, "cid", "access"))).toBeNull();
+    expect(await stored(h.secrets, "access")).toBeNull();
     expect(await h.run("--json", "auth", "status")).toBe(3);
   }, 15_000);
 
@@ -322,9 +321,7 @@ describe("crisper (command contract)", () => {
         ? { status: 401 }
         : { status: 200, body: okConnection(h.state) };
     expect(await h.run("--json", "orgs", "list")).toBe(0);
-    expect(await h.secrets.get(secretName(ORIGIN, "cid", "access"))).toBe(
-      "access-2",
-    );
+    expect(await stored(h.secrets, "access")).toBe("access-2");
     h.state.mcp = () => ({ status: 401 });
     expect(await h.run("--json", "orgs", "list")).toBe(3);
     expect(JSON.parse(h.out[0]!).error.code).toBe("AUTH_EXPIRED");
@@ -385,10 +382,22 @@ describe("crisper (command contract)", () => {
     h.state.revokeOk = false;
     expect(await h.run("--json", "logout")).toBe(8);
     expect(JSON.parse(h.out[0]!).error.code).toBe("REVOCATION_UNCONFIRMED");
-    expect(
-      await h.secrets.get(secretName(ORIGIN, "cid", "refresh")),
-    ).toBeNull();
+    expect(await stored(h.secrets, "refresh")).toBeNull();
     expect(await h.run("--json", "orgs", "list")).toBe(3);
+  }, 15_000);
+
+  it("logout with no token left says nothing was revoked (exit 0)", async () => {
+    await h.run("--json", "login", "--no-browser");
+    for (const name of h.secrets.names()) await h.secrets.delete(name);
+    h.state.revoked.length = 0;
+    expect(await h.run("--json", "logout")).toBe(0);
+    expect(JSON.parse(h.out[0]!).data).toEqual({
+      signedOut: true,
+      revoked: false,
+      hadToken: false,
+    });
+    expect(h.state.revoked).toEqual([]);
+    expect(await h.run("logout")).toBe(3);
   }, 15_000);
 
   it("a second login revokes the first session's tokens", async () => {
@@ -396,9 +405,7 @@ describe("crisper (command contract)", () => {
     h.state.pendingPolls = 0;
     await h.run("--json", "login", "--no-browser");
     expect(h.state.revoked).toEqual(["refresh_token", "access_token"]);
-    expect(await h.secrets.get(secretName(ORIGIN, "cid", "access"))).toBe(
-      "access-2",
-    );
+    expect(await stored(h.secrets, "access")).toBe("access-2");
   }, 15_000);
 
   it("a cancelled or refused second login leaves the first one working", async () => {

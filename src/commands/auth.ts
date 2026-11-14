@@ -1,13 +1,14 @@
 import { pollForToken, requestDeviceCode } from "../auth/device.js";
 import { discoverAuth } from "../auth/metadata.js";
 import {
+  type Session,
   type SessionDeps,
   clearSession,
   hasSession,
   loadSession,
   saveSession,
 } from "../auth/session.js";
-import { secretName } from "../auth/store.js";
+import { type Profile, secretName } from "../auth/store.js";
 import { revokeToken } from "../auth/tokens.js";
 import { requireClientId } from "../config.js";
 import { CliError, EXIT } from "../errors.js";
@@ -124,15 +125,21 @@ export async function login(
   );
   // Only now is the previous sign-in replaced, so a cancelled or failed
   // login leaves it working.
+  // Each fallback clears only the sign-in it loaded, never a newer one
+  // another process made meanwhile; saveSession revokes and removes whatever
+  // this folder still holds when the new sign-in is saved.
   if (await hasSession(deps)) {
+    let replaced: Session | null = null;
     try {
-      await (await loadSession(deps)).signOut();
+      replaced = await loadSession(deps);
+      await replaced.signOut();
     } catch {
-      await clearSession(deps).catch(() => {});
+      if (replaced) await clearSession(deps, replaced.profile).catch(() => {});
     }
   }
+  let saved: Profile;
   try {
-    await saveSession(deps, {
+    saved = await saveSession(deps, {
       issuer: meta.issuer,
       clientId,
       resource: meta.resource,
@@ -160,14 +167,23 @@ export async function login(
     throw error;
   }
 
-  // Prove the token at the real gate and learn which orgs it may use.
+  // Prove the token at the real gate and learn which orgs it may use. Login
+  // acts only on the sign-in it saved: if another login in this folder
+  // finished meanwhile, that one is in use and is left alone (its save has
+  // already revoked this one).
   const session = await sessionOf(ctx);
+  if (session.profile.slot !== saved.slot)
+    throw new CliError(
+      "CONFLICT",
+      "Another sign-in finished in this config folder at the same time, and it is the one now in use.",
+      { exit: EXIT.failure, next: "Run `crisper auth status` to see it." },
+    );
   let organizations: Organization[];
   let userId: string | null;
   try {
     ({ organizations, userId } = await fetchOrganizations(ctx, session));
   } catch (error) {
-    await session.signOut().catch(() => clearSession(deps));
+    await session.signOut().catch(() => clearSession(deps, session.profile));
     throw error;
   }
   const samePerson =
@@ -235,7 +251,9 @@ export async function status(ctx: CommandContext) {
     signedInAt: p.signedInAt,
     accessTokenExpiresAt: new Date(p.expiresAt).toISOString(),
     canRefresh: Boolean(
-      await ctx.secrets.get(secretName(p.origin, p.clientId, "refresh")),
+      await ctx.secrets.get(
+        secretName(ctx.config.origin, p.clientId, "refresh", p.slot),
+      ),
     ),
     defaultOrgId: p.defaultOrgId,
     defaultSiteId: p.defaultSiteId ?? null,
@@ -259,8 +277,8 @@ export async function status(ctx: CommandContext) {
 
 export async function logout(ctx: CommandContext) {
   const session = await sessionOf(ctx);
-  const confirmed = await session.signOut();
-  if (!confirmed)
+  const { revoked, hadToken } = await session.signOut();
+  if (hadToken && !revoked)
     throw new CliError(
       "REVOCATION_UNCONFIRMED",
       "Signed out on this computer, but Crisper could not confirm the sign-in was revoked.",
@@ -271,7 +289,10 @@ export async function logout(ctx: CommandContext) {
       },
     );
   return {
-    data: { signedOut: true, revoked: true },
-    human: () => "Signed out. The sign-in was revoked.",
+    data: { signedOut: true, revoked, hadToken },
+    human: () =>
+      hadToken
+        ? "Signed out. The sign-in was revoked."
+        : "Signed out. No sign-in token was left on this computer, so there was nothing to revoke.",
   };
 }

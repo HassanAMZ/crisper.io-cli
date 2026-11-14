@@ -11,6 +11,7 @@ import { ConfigStore, MemoryStore, secretName } from "../src/auth/store.js";
 import { approvalUrl } from "../src/commands/auth.js";
 import { type CliConfig } from "../src/config.js";
 import { safeJson, safeText, table } from "../src/output.js";
+import { stored } from "./stored.js";
 
 const config: CliConfig = {
   origin: "https://crisper.io",
@@ -154,9 +155,7 @@ describe("cross-process refresh", () => {
     expect(ta).toBe("at2");
     expect(tb).toBe("at2");
     expect(calls).toBe(1);
-    expect(
-      await deps.secrets.get(secretName(config.origin, "cid", "refresh")),
-    ).toBe("rt2");
+    expect(await stored(deps.secrets, "refresh")).toBe("rt2");
   });
 
   it("a stale lock is taken over", async () => {
