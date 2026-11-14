@@ -22,6 +22,7 @@ const TRACKED_ALLOWLIST = [
   /^scripts\/[a-z0-9-]+\.mjs$/,
   /^src\/[a-z0-9/-]+\.ts$/,
   /^test\/[a-z0-9/-]+\.test\.ts$/,
+  /^test\/stored\.ts$/, // shared token lookup for the session tests
 ];
 const PACKED_ALLOWLIST = [
   /^package\.json$/,

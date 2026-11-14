@@ -26,6 +26,7 @@ npx crisperio --json orgs list   # one JSON object on stdout, progress on stderr
 
 ## For AI agents
 
+Version 0.0.14 keeps each config folder's sign-in separate: two `CRISPER_CONFIG_DIR` or `XDG_CONFIG_HOME` folders on one computer no longer share one, so an agent run as one person can't act as another. A sign-in saved by 0.0.13 or earlier was shared, so after upgrading it is revoked and `crisper login` is needed once. `crisper logout` now reports `hadToken: false` and `revoked: false` when no token was left to revoke.
 Version 0.0.13 adds people to an organization: `members invite <email...>` (up to 10; Members unless `--admin`), `members list`, `members revoke <email|invitationId>` and `members role <email|userId> <member|admin>`. An organization admin's request is the approval, so these run without `--yes`; each email gets a result, and a failed one says whether and when to run it again. It also ships the commands added since 0.0.12: `logs drop` (why leads dropped), `key-events get|update|default|set-default|apply`, and the beta ad platforms in `integrations connect`.
 Version 0.0.9 makes `logs export` write its temporary file under a random name it creates itself, so it never writes through a file someone else placed there.
 Version 0.0.8 pulls your data: `logs list` (requests in a date range, with filters and a cursor), `logs export` (to an NDJSON or CSV file, up to `--max-pages` pages of 100; `--cursor` resumes) and `logs stats` (purchases and leads counted and summed per day, source and more).
@@ -104,7 +105,8 @@ Add `--json` before the command for a single machine-readable envelope: `schemaV
 
 - You never type a sign-in password or token into the terminal. Platform tokens use a hidden prompt or piped stdin. Sign-in happens on Crisper's own page, and the login can use every organization your account belongs to; the server checks that on every command.
 - Tokens are kept in your operating system's credential store (macOS Keychain, Windows Credential Manager, Linux Secret Service). There is no plain-text fallback. On macOS, the first read from a different `node` binary (for example `npx` after a Node upgrade) can prompt for Keychain access; that's the Keychain, not a bug.
-- `crisper logout` revokes the sign-in on the server, then clears it locally.
+- Each config folder keeps its own sign-in, so two folders on one computer never act as each other. This keeps sign-ins apart; it is not a wall between people who share one computer account, since any program run as that account can read its Keychain entries.
+- `crisper logout` revokes the sign-in on the server, then clears it locally. If no token was left, it says so instead of claiming a revocation.
 - Output escapes control characters, so a site name can't rewrite your terminal.
 - If a connection to Crisper can't be opened, the CLI tries twice more before giving up. Nothing has been sent at that point, so a retry can't repeat a change.
 

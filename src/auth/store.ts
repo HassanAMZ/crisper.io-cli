@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import {
   chmod,
   mkdir,
@@ -88,6 +89,10 @@ export class KeyringStore implements SecretStore {
 
 export class MemoryStore implements SecretStore {
   private map = new Map<string, string>();
+  /** Entry names, for tests. */
+  names() {
+    return [...this.map.keys()];
+  }
   async get(name: string) {
     return this.map.get(name) ?? null;
   }
@@ -111,6 +116,12 @@ export type Profile = {
   /** Unix ms when the access token expires; 0 when the issuer gave no lifetime. */
   expiresAt: number;
   scope: string | null;
+  /**
+   * This config folder's own sign-in: its keychain entries are named with
+   * it, so two folders on one computer never read each other's tokens.
+   * Absent on profiles saved before 0.0.14 (one shared entry per origin).
+   */
+  slot?: string;
   /** Clerk user ID, as reported by the server after sign-in. */
   subject: string | null;
   email: string | null;
@@ -180,13 +191,47 @@ export class ConfigStore {
   }
 }
 
+/** A new sign-in slot: 128 random bits as 32 lowercase hex characters. */
+export const newSlot = () => randomBytes(16).toString("hex");
+
 /**
- * Secrets are keyed by the full origin (scheme included) and the client they
- * were issued to, so an http://localhost profile and an https one, or two
- * Crisper apps, never read each other's tokens.
+ * The slot comes back from a plain file: only the shape newSlot makes is
+ * trusted, so a copied or edited value never names another entry to read
+ * or delete.
+ */
+export const validSlot = (value: unknown): value is string =>
+  typeof value === "string" && /^[0-9a-f]{32}$/.test(value);
+
+/**
+ * The client ID also comes back from the plain file. A Clerk client ID is
+ * letters, digits, `_` and `-`; nothing else (a `|` above all) may become
+ * part of an entry name.
+ */
+export const validClientId = (value: unknown): value is string =>
+  typeof value === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(value);
+
+/**
+ * Secrets are keyed by the full origin (scheme included), the client they
+ * were issued to and the config folder's slot, so an http://localhost
+ * profile and an https one, two Crisper apps, or two config folders on one
+ * computer never read each other's tokens. With no slot this is the name
+ * versions before 0.0.14 used, kept only to clear those entries. A name is
+ * built only from a valid client ID and slot (one rule, fail closed): any
+ * other value throws instead of naming an entry.
  */
 export const secretName = (
   origin: string,
   clientId: string,
   kind: "access" | "refresh",
-) => `${new URL(origin).origin}|${clientId}|${kind}`;
+  slot?: string,
+) => {
+  if (!validClientId(clientId) || (slot !== undefined && !validSlot(slot)))
+    throw new CliError(
+      "AUTH_REQUIRED",
+      "The saved sign-in's app ID or folder slot is not valid.",
+      { exit: EXIT.auth, next: "Run `crisper login`." },
+    );
+  return slot === undefined
+    ? `${new URL(origin).origin}|${clientId}|${kind}`
+    : `${new URL(origin).origin}|${clientId}|${slot}|${kind}`;
+};

@@ -2178,10 +2178,10 @@ describe("0.0.7: parity commands, one MCP session, clearer errors", () => {
     expect(h.json()).toMatchObject({
       command: "version",
       ok: true,
-      data: { version: "0.0.13" },
+      data: { version: "0.0.14" },
     });
     expect(await h.run("--version")).toBe(0);
-    expect(h.out).toEqual(["0.0.13"]);
+    expect(h.out).toEqual(["0.0.14"]);
   });
 
   it("billing cancel shows the period end as a UTC minute, not raw ISO", async () => {
